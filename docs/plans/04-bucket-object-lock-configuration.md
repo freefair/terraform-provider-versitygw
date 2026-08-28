@@ -58,6 +58,20 @@ gateway requires it, add `object_lock_enabled` (bool, replaces) to
 that this also enables versioning at creation. If the gateway does not care,
 leave the bucket resource alone.
 
+## Measured (v1.7.0, implementation)
+
+- `PUT ?object-lock` requires `Content-MD5`; the client now sends it on
+  every sub-resource PUT.
+- Lock on an unversioned bucket → `InvalidBucketState` (HTTP 409, "Versioning
+  must be 'Enabled'"). Lock on a bucket versioned after creation works, so
+  no `object_lock_enabled` on `versitygw_bucket` — the bucket resource stays
+  untouched. (`x-amz-bucket-object-lock-enabled` on the admin create route
+  does work and enables versioning too; not exposed, not needed.)
+- Removing the rule: PUT without `Rule` → `GET` answers `<Rule></Rule>`,
+  normalised to "no rule" in the client.
+- **Never send `DELETE ?object-lock`**: it deletes the bucket. Delete is
+  state-only.
+
 ## Tests
 
 1. bucket + versioning Enabled + lock with `GOVERNANCE`/`days = 1` → read

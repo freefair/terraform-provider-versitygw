@@ -71,17 +71,18 @@ jobs:
         image: versity/versitygw:latest
         ports:
           - 7070:7070
+        volumes:
+          - vgw-versions:/tmp/vgw-versions
         env:
           ROOT_ACCESS_KEY_ID: testaccess
           ROOT_SECRET_ACCESS_KEY: testsecret
           VGW_BACKEND: posix
           # Same layout as test.yml: /tmp/vgw is the directory the image
-          # creates, and VGW_IAM_DIR is what turns on the IAM service.
-          # VGW_VERSIONING_DIR is deliberately absent — the gateway refuses
-          # a versioning directory that does not exist, and the image has
-          # none; docs/plans/03 covers how to provide one.
+          # creates, VGW_IAM_DIR turns on the IAM service, and the named
+          # volume gives the versioning directory an existence.
           VGW_BACKEND_ARG: /tmp/vgw
           VGW_IAM_DIR: /tmp/vgw
+          VGW_VERSIONING_DIR: /tmp/vgw-versions
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7

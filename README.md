@@ -65,6 +65,8 @@ resource "versitygw_bucket" "artifacts" {
 | [`versitygw_user`](docs/resources/user.md) | An account in the gateway's IAM service |
 | [`versitygw_bucket`](docs/resources/bucket.md) | A bucket and the account that owns it |
 | [`versitygw_bucket_policy`](docs/resources/bucket_policy.md) | The policy of a bucket |
+| [`versitygw_bucket_versioning`](docs/resources/bucket_versioning.md) | Versioning state of a bucket |
+| [`versitygw_bucket_object_lock_configuration`](docs/resources/bucket_object_lock_configuration.md) | Object lock and default retention of a bucket |
 
 | Data source | Description |
 |---|---|
@@ -77,8 +79,8 @@ Full argument reference on the
 ### Roadmap
 
 The admin API is covered completely. What the gateway offers per bucket over
-the S3 API — ACL, versioning, object lock, tags, CORS, website, ownership
-controls — is not yet (policy is), and is planned as one resource each, shaped
+the S3 API — ACL, tags, CORS, website, ownership controls — is not yet
+(policy, versioning and object lock are), and is planned as one resource each, shaped
 like the corresponding `aws_s3_bucket_*` resource. See
 [`docs/plans/`](docs/plans/README.md) for the plans and for what is
 deliberately left out.
@@ -128,10 +130,13 @@ prove the provider agrees with itself, and the wire format belongs to upstream:
 ```bash
 # --iam-dir is what turns on the IAM service; without it the gateway runs in
 # single-account mode and every account route answers 501. /tmp/vgw is the
-# directory the image creates.
+# directory the image creates. The versioning directory has to exist too,
+# and a named volume is the simplest way to make it so (a bind mount from
+# macOS lacks the xattr support the backend needs).
 docker run --rm -d -p 7070:7070 --name versitygw-acc \
+  -v vgw-versions:/tmp/vgw-versions \
   -e ROOT_ACCESS_KEY_ID=testaccess -e ROOT_SECRET_ACCESS_KEY=testsecret \
-  versity/versitygw:v1.7.0 --iam-dir /tmp/vgw posix /tmp/vgw
+  versity/versitygw:v1.7.0 --iam-dir /tmp/vgw posix /tmp/vgw --versioning-dir /tmp/vgw-versions
 
 export TF_ACC=1
 export VERSITYGW_ENDPOINT=http://127.0.0.1:7070

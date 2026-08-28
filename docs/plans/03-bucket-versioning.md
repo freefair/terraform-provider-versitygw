@@ -52,6 +52,16 @@ No `mfa_delete` — the gateway has no MFA.
   backends: **verify** whether `PutBucketVersioning` is implemented there or
   answers `NotImplemented`; document per backend.
 
+## Measured (v1.7.0, implementation)
+
+- Fresh bucket: `GET ?versioning` answers an empty `VersioningConfiguration`
+  (no `Status`). `Disabled` → `MalformedXML`.
+- Suspending with an object lock present → `InvalidBucketState` (HTTP 400).
+- **Never send `DELETE ?versioning`**: the router falls through to
+  `DeleteBucket` and removes the bucket. Delete is state-only.
+- CI: a named Docker volume on the service container creates the versioning
+  directory; no step-based `docker run` needed.
+
 ## Tests
 
 1. `Enabled` → read back `Enabled`; a `PutObject` twice on the same key

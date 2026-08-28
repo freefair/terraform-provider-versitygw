@@ -565,3 +565,91 @@ func TestEmptyErrorBodyStaysReadable(t *testing.T) {
 		t.Errorf("empty body not explained: %v", err)
 	}
 }
+
+func TestVersioningRoundTrip(t *testing.T) {
+	var got struct {
+		method, body, md5 string
+	}
+	stored := ""
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		got.method, got.body, got.md5 = r.Method, string(b), r.Header.Get("Content-MD5")
+		if r.Method == http.MethodPut {
+			stored = string(b)
+			return
+		}
+		_, _ = io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?>
+<VersioningConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/">`+stored+`</VersioningConfiguration>`)
+	})
+	if err := c.PutBucketVersioning(context.Background(), "b", VersioningEnabled); err != nil {
+		t.Fatalf("PutBucketVersioning: %v", err)
+	}
+	if got.body != `<VersioningConfiguration><Status>Enabled</Status></VersioningConfiguration>` {
+		t.Errorf("body = %s", got.body)
+	}
+	if got.md5 == "" {
+		t.Error("Content-MD5 missing — the gateway rejects object lock without it")
+	}
+	// Read back what was stored, then read an unconfigured bucket.
+	stored = `<Status>Enabled</Status>`
+	if s, err := c.GetBucketVersioning(context.Background(), "b"); err != nil || s != "Enabled" {
+		t.Errorf("GetBucketVersioning = %q, %v", s, err)
+	}
+	stored = ""
+	if s, err := c.GetBucketVersioning(context.Background(), "b"); err != nil || s != "" {
+		t.Errorf("unconfigured bucket = %q, %v; want empty", s, err)
+	}
+}
+
+func TestObjectLockRoundTrip(t *testing.T) {
+	answers := map[string]string{
+		"rule":       `<ObjectLockConfiguration><ObjectLockEnabled>Enabled</ObjectLockEnabled><Rule><DefaultRetention><Days>3</Days><Mode>GOVERNANCE</Mode></DefaultRetention></Rule></ObjectLockConfiguration>`,
+		"empty rule": `<ObjectLockConfiguration><ObjectLockEnabled>Enabled</ObjectLockEnabled><Rule></Rule></ObjectLockConfiguration>`,
+	}
+	var sent string
+	current := "rule"
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut {
+			b, _ := io.ReadAll(r.Body)
+			sent = string(b)
+			return
+		}
+		_, _ = io.WriteString(w, answers[current])
+	})
+
+	cfg := ObjectLockConfiguration{ObjectLockEnabled: "Enabled", Rule: &ObjectLockRule{DefaultRetention: &DefaultRetention{Mode: "COMPLIANCE", Years: 1}}}
+	if err := c.PutObjectLockConfiguration(context.Background(), "b", cfg); err != nil {
+		t.Fatalf("PutObjectLockConfiguration: %v", err)
+	}
+	if !strings.Contains(sent, "<Years>1</Years>") || strings.Contains(sent, "<Days>") {
+		t.Errorf("body = %s", sent)
+	}
+
+	got, err := c.GetObjectLockConfiguration(context.Background(), "b")
+	if err != nil || got == nil || got.Rule == nil || got.Rule.DefaultRetention.Days != 3 || got.Rule.DefaultRetention.Mode != "GOVERNANCE" {
+		t.Errorf("parsed %+v, %v", got, err)
+	}
+	// The gateway answers <Rule></Rule> when no default retention is set;
+	// that must read as "no rule", not as a rule with nothing in it.
+	current = "empty rule"
+	got, err = c.GetObjectLockConfiguration(context.Background(), "b")
+	if err != nil || got == nil || got.Rule != nil {
+		t.Errorf("empty rule parsed as %+v, %v", got, err)
+	}
+
+	c, _ = newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`<Error><Code>ObjectLockConfigurationNotFoundError</Code></Error>`))
+	})
+	if got, err := c.GetObjectLockConfiguration(context.Background(), "b"); err != nil || got != nil {
+		t.Errorf("absent lock = %+v, %v; want nil, nil", got, err)
+	}
+
+	c, _ = newTestClient(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, `<<garbage`) })
+	if _, err := c.GetObjectLockConfiguration(context.Background(), "b"); err == nil {
+		t.Error("garbage accepted as object lock configuration")
+	}
+	if _, err := c.GetBucketVersioning(context.Background(), "b"); err == nil {
+		t.Error("garbage accepted as versioning configuration")
+	}
+}
