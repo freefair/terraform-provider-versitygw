@@ -10,3 +10,6 @@ dist/
 
 # Session journal, local only
 .claude/task-notes/
+
+# Generated Knowledge rule mirrors, regenerated per session
+.claude/rules/

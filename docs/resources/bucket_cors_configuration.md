@@ -68,6 +68,11 @@ A gateway started with that flag answers preflights for buckets that have
 no CORS configuration of their own. Once this resource exists, its rules
 decide and the flag is not consulted for the bucket.
 
+## An owner change keeps the configuration
+
+`change-bucket-owner` resets only the ACL and the policy; the CORS rules
+stay, and this resource shows no diff after the bucket changes hands.
+
 ## Destroy deletes the configuration
 
 `DELETE ?cors` is a real route; the bucket stays, and afterwards reports
