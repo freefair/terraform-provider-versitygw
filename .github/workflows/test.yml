@@ -68,7 +68,12 @@ jobs:
           ROOT_ACCESS_KEY_ID: testaccess
           ROOT_SECRET_ACCESS_KEY: testsecret
           VGW_BACKEND: posix
-          VGW_BACKEND_ARG: /tmp/gw
+          # /tmp/vgw is the one directory the image creates (Dockerfile
+          # SETUP_DIR/IAM_DIR); the posix backend chdirs into it and refuses
+          # a path that does not exist. Without VGW_IAM_DIR the gateway runs
+          # in single-account mode and every account route answers 501.
+          VGW_BACKEND_ARG: /tmp/vgw
+          VGW_IAM_DIR: /tmp/vgw
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

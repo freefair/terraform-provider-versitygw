@@ -85,8 +85,8 @@ attributes on the bucket and are untouched. So:
 - `provider_test.go`: a helper that renders `versitygw_user` +
   `versitygw_bucket` fixtures so each sub-resource test adds only its own
   block.
-- CI service already sets `VGW_VERSIONING_DIR` in `compat.yml`; add the same
-  to `test.yml` when plan 03 lands.
+- `VGW_VERSIONING_DIR` is not set in CI yet — the directory has to exist in
+  the container and the image has none. Plan 03 owns that change.
 
 ## Verification
 

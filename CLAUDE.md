@@ -33,6 +33,10 @@ code without re-checking them breaks things silently.
 - **`list-users` returns secret keys** (`s3api/controllers/admin.go:127`
   returns `auth.ListUserAccountsResult`, whose `Account` has a `Secret` field).
   This is what makes drift detection on `secret_key` possible.
+- **Without an IAM backend (`--iam-dir` or another `--iam-*`) the gateway
+  runs in single-account mode** and every account route answers
+  `501 XAdminMethodNotSupported`. The posix backend and the versioning
+  directory must exist before start; the image creates only `/tmp/vgw`.
 - **There is no admin route to delete a bucket.** Deletion goes to the S3 API,
   which refuses a non-empty bucket.
 - **`change-bucket-owner` discards the bucket's ACL and policy — and nothing

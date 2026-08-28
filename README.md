@@ -125,9 +125,12 @@ Acceptance tests run against a real instance on purpose — a mock would only
 prove the provider agrees with itself, and the wire format belongs to upstream:
 
 ```bash
+# --iam-dir is what turns on the IAM service; without it the gateway runs in
+# single-account mode and every account route answers 501. /tmp/vgw is the
+# directory the image creates.
 docker run --rm -d -p 7070:7070 --name versitygw-acc \
   -e ROOT_ACCESS_KEY_ID=testaccess -e ROOT_SECRET_ACCESS_KEY=testsecret \
-  versity/versitygw:latest posix /tmp/gw
+  versity/versitygw:v1.7.0 --iam-dir /tmp/vgw posix /tmp/vgw
 
 export TF_ACC=1
 export VERSITYGW_ENDPOINT=http://127.0.0.1:7070

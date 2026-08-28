@@ -75,11 +75,13 @@ jobs:
           ROOT_ACCESS_KEY_ID: testaccess
           ROOT_SECRET_ACCESS_KEY: testsecret
           VGW_BACKEND: posix
-          VGW_BACKEND_ARG: /tmp/gw
-          # Bucket versioning on the posix backend only exists with a
-          # versioning directory. Harmless for the current tests; required
-          # once versitygw_bucket_versioning lands (docs/plans/03).
-          VGW_VERSIONING_DIR: /tmp/gw-versions
+          # Same layout as test.yml: /tmp/vgw is the directory the image
+          # creates, and VGW_IAM_DIR is what turns on the IAM service.
+          # VGW_VERSIONING_DIR is deliberately absent — the gateway refuses
+          # a versioning directory that does not exist, and the image has
+          # none; docs/plans/03 covers how to provide one.
+          VGW_BACKEND_ARG: /tmp/vgw
+          VGW_IAM_DIR: /tmp/vgw
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

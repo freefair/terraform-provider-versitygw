@@ -18,7 +18,7 @@ import (
 //
 //	docker run --rm -d -p 7070:7070 --name versitygw-acc \
 //	  -e ROOT_ACCESS_KEY_ID=testaccess -e ROOT_SECRET_ACCESS_KEY=testsecret \
-//	  versity/versitygw:latest posix /tmp/gw
+//	  versity/versitygw:v1.7.0 --iam-dir /tmp/vgw posix /tmp/vgw
 //
 //	export TF_ACC=1
 //	export VERSITYGW_ENDPOINT=http://127.0.0.1:7070
@@ -27,7 +27,9 @@ import (
 //
 // The container is started without --admin-port on purpose: that is the layout
 // where the admin routes live on the S3 listener, and it exercises the
-// provider's endpoint fallback.
+// provider's endpoint fallback. --iam-dir is not optional: without an IAM
+// service the gateway runs in single-account mode and answers every account
+// route with 501 XAdminMethodNotSupported.
 
 var testAccProtoV6ProviderFactories = map[string]func() (tfprotov6.ProviderServer, error){
 	"versitygw": providerserver.NewProtocol6WithError(provider.New("test")()),

@@ -34,8 +34,14 @@ No `mfa_delete` — the gateway has no MFA.
 - **posix needs a versioning directory.** Without `--versioning-dir` /
   `VGW_VERSIONING_DIR` the PUT answers `ErrVersioningNotConfigured`. Map it to
   a diagnostic that names the flag; the error message alone does not.
-  `compat.yml` already sets `VGW_VERSIONING_DIR`; `test.yml` gets it with this
-  plan.
+  **The directory must exist before the gateway starts** — a missing path
+  fails `init posix backend` and the container exits. The image creates only
+  `/tmp/vgw`, and a `services:` container cannot run a `mkdir`. Options for
+  CI: (a) start the gateway in a step with `docker run -v` against a runner
+  directory (ext4 supports xattrs; on macOS bind mounts do not), or (b) build
+  a tiny test image on top of `versity/versitygw` that adds the directory.
+  (a) keeps everything in the workflow file; pick it unless it turns out to
+  be slower than the service block.
 - **Suspending is refused while object lock is enabled**
   (`ErrSuspendedVersioningNotAllowed`). Surface verbatim; that is the right
   answer.
