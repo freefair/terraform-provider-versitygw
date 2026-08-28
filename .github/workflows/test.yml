@@ -57,7 +57,11 @@ jobs:
     timeout-minutes: 15
     services:
       versitygw:
-        image: versity/versitygw:latest
+        # Pinned to the release the "Upstream facts" in CLAUDE.md were measured
+        # against, so a pull request cannot go red because upstream moved.
+        # compat.yml runs weekly against :latest and is where drift shows up;
+        # bumping this pin is a deliberate commit that re-checks those facts.
+        image: versity/versitygw:v1.7.0
         ports:
           - 7070:7070
         env:

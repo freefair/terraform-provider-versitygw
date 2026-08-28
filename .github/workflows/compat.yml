@@ -1,0 +1,137 @@
+# Weekly compatibility run against moving targets.
+#
+# test.yml pins the gateway to the version the "Upstream facts" in CLAUDE.md
+# were measured against, so pull requests stay deterministic. This workflow is
+# the counterpart: it runs the same acceptance tests against
+# versity/versitygw:latest with the newest Terraform and the newest OpenTofu,
+# and goes red when any of the three moved in a way the provider does not
+# survive. The versions in play are written to the job summary so a red run
+# says what broke without anyone reading logs.
+name: Compatibility
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: compat-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  versions:
+    name: Resolve latest versions
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      versitygw: ${{ steps.resolve.outputs.versitygw }}
+      terraform: ${{ steps.resolve.outputs.terraform }}
+      opentofu: ${{ steps.resolve.outputs.opentofu }}
+    steps:
+      - id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          latest() { gh api "repos/$1/releases/latest" --jq .tag_name; }
+          versitygw=$(latest versity/versitygw)
+          terraform=$(latest hashicorp/terraform)
+          opentofu=$(latest opentofu/opentofu)
+          {
+            echo "versitygw=$versitygw"
+            echo "terraform=$terraform"
+            echo "opentofu=$opentofu"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "## Versions under test"
+            echo
+            echo "| Component | Latest release |"
+            echo "|---|---|"
+            echo "| versitygw | $versitygw (image \`versity/versitygw:latest\`) |"
+            echo "| Terraform | $terraform |"
+            echo "| OpenTofu | $opentofu |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  acceptance:
+    name: Acceptance (${{ matrix.tool }} latest, versitygw latest)
+    needs: versions
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        tool: [terraform, opentofu]
+    services:
+      versitygw:
+        # `latest` on purpose — this run exists to find out whether the
+        # newest gateway still agrees with the provider.
+        image: versity/versitygw:latest
+        ports:
+          - 7070:7070
+        env:
+          ROOT_ACCESS_KEY_ID: testaccess
+          ROOT_SECRET_ACCESS_KEY: testsecret
+          VGW_BACKEND: posix
+          VGW_BACKEND_ARG: /tmp/gw
+          # Bucket versioning on the posix backend only exists with a
+          # versioning directory. Harmless for the current tests; required
+          # once versitygw_bucket_versioning lands (docs/plans/03).
+          VGW_VERSIONING_DIR: /tmp/gw-versions
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Set up Terraform (latest)
+        if: matrix.tool == 'terraform'
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: latest
+          terraform_wrapper: false
+
+      - name: Set up OpenTofu (latest)
+        if: matrix.tool == 'opentofu'
+        uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: latest
+          tofu_wrapper: false
+
+      # terraform-plugin-testing looks for `terraform` on PATH. For OpenTofu
+      # it has to be pointed at the binary, and told which registry the
+      # provider namespace resolves against.
+      - name: Point the test harness at OpenTofu
+        if: matrix.tool == 'opentofu'
+        run: |
+          set -euo pipefail
+          {
+            echo "TF_ACC_TERRAFORM_PATH=$(command -v tofu)"
+            echo "TF_ACC_PROVIDER_NAMESPACE=hashicorp"
+            echo "TF_ACC_PROVIDER_HOST=registry.opentofu.org"
+          } >> "$GITHUB_ENV"
+
+      - name: Record tool version
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.tool }}" = "opentofu" ]; then v=$(tofu version); else v=$(terraform version); fi
+          echo "$v"
+          {
+            echo "### ${{ matrix.tool }}"
+            echo
+            echo '```'
+            echo "$v"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - run: go build -v .
+
+      - name: Acceptance tests
+        run: go test -v -cover -timeout 15m ./...
+        env:
+          TF_ACC: "1"
+          VERSITYGW_ENDPOINT: http://127.0.0.1:7070
+          VERSITYGW_ACCESS_KEY: testaccess
+          VERSITYGW_SECRET_KEY: testsecret

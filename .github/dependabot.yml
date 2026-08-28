@@ -1,0 +1,48 @@
+# Dependabot keeps Go modules and GitHub Actions current.
+#
+# There is deliberately no `docker` ecosystem: the repository has no Dockerfile,
+# and the versitygw service image pinned in workflows/test.yml is not something
+# Dependabot can see. Upstream drift of the gateway is caught by
+# workflows/compat.yml, which runs weekly against versity/versitygw:latest;
+# bumping the pin is a deliberate commit that re-checks the "Upstream facts"
+# in CLAUDE.md.
+version: 2
+
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Berlin
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - go
+    commit-message:
+      prefix: deps
+    groups:
+      # Minor and patch bumps of the module graph arrive as one PR; a major
+      # bump of anything gets its own, because it is the one that needs reading.
+      go-minor-patch:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Berlin
+    labels:
+      - dependencies
+      - ci
+    commit-message:
+      prefix: ci
+    groups:
+      actions:
+        patterns:
+          - "*"
