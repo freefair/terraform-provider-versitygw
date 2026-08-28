@@ -413,3 +413,155 @@ resource "versitygw_bucket_ownership_controls" "test" {
 		recover(g),
 	)
 }
+
+const faultOwnershipWriter = faultBucket + `
+resource "versitygw_bucket_ownership_controls" "test" {
+  bucket = versitygw_bucket.test.name
+  rule {
+    object_ownership = "ObjectWriter"
+  }
+}
+`
+
+const faultACLCanned = faultOwnershipWriter + `
+resource "versitygw_bucket_acl" "test" {
+  bucket     = versitygw_bucket.test.name
+  acl        = "public-read"
+  depends_on = [versitygw_bucket_ownership_controls.test]
+}
+`
+
+const faultACLExplicit = faultOwnershipWriter + `
+resource "versitygw_bucket_acl" "test" {
+  bucket = versitygw_bucket.test.name
+  access_control_policy {
+    grant {
+      permission = "READ"
+      grantee {
+        type = "CanonicalUser"
+        id   = versitygw_user.test.access_key
+      }
+    }
+  }
+  depends_on = [versitygw_bucket_ownership_controls.test]
+}
+`
+
+func TestFaultACLConfigValidation(t *testing.T) {
+	newFakeGateway(t)
+	faultCase(t, expectError(faultOwnershipWriter+`
+resource "versitygw_bucket_acl" "test" {
+  bucket = versitygw_bucket.test.name
+}
+`, `Choose one ACL form`))
+
+	newFakeGateway(t)
+	faultCase(t, expectError(faultOwnershipWriter+`
+resource "versitygw_bucket_acl" "test" {
+  bucket = versitygw_bucket.test.name
+  acl    = "private"
+  access_control_policy {}
+}
+`, `Choose one ACL form`))
+
+	newFakeGateway(t)
+	faultCase(t, expectError(faultOwnershipWriter+`
+resource "versitygw_bucket_acl" "test" {
+  bucket = versitygw_bucket.test.name
+  access_control_policy {
+    grant {
+      permission = "READ"
+      grantee {
+        type = "Group"
+        id   = "all-users"
+      }
+    }
+  }
+}
+`, `value must be one of`))
+}
+
+func TestFaultACL(t *testing.T) {
+	// No ownership controls → the fake, like the gateway, refuses.
+	newFakeGateway(t)
+	faultCase(t, expectError(faultBucket+`
+resource "versitygw_bucket_acl" "test" {
+  bucket = versitygw_bucket.test.name
+  acl    = "private"
+}
+`, `does not allow ACLs`))
+
+	// A grant for an account that does not exist → 500 upstream.
+	newFakeGateway(t)
+	faultCase(t, expectError(faultOwnershipWriter+`
+resource "versitygw_bucket_acl" "test" {
+  bucket = versitygw_bucket.test.name
+  access_control_policy {
+    grant {
+      permission = "READ"
+      grantee {
+        type = "CanonicalUser"
+        id   = "nobody"
+      }
+    }
+  }
+  depends_on = [versitygw_bucket_ownership_controls.test]
+}
+`, `non-existent account`))
+
+	// The owner's FULL_CONTROL is implicit; a configured copy would be
+	// duplicated by the gateway and could never converge.
+	newFakeGateway(t)
+	faultCase(t, expectError(faultOwnershipWriter+`
+resource "versitygw_bucket_acl" "test" {
+  bucket = versitygw_bucket.test.name
+  access_control_policy {
+    grant {
+      permission = "FULL_CONTROL"
+      grantee {
+        type = "CanonicalUser"
+        id   = versitygw_user.test.access_key
+      }
+    }
+  }
+  depends_on = [versitygw_bucket_ownership_controls.test]
+}
+`, `Owner grant is implicit`))
+
+	g := newFakeGateway(t)
+	g.fail("PUT /fault-bucket?acl", 404, "NoSuchBucket")
+	faultCase(t, expectError(faultACLCanned, `Bucket does not exist`), recover(g))
+
+	g = newFakeGateway(t)
+	g.fail("GET /fault-bucket?acl", 404, "NoSuchBucket")
+	faultCase(t, expectError(faultACLExplicit, `Bucket does not exist`), recover(g))
+
+	g = newFakeGateway(t)
+	g.fail("PUT /fault-bucket?acl", 500, "InternalError")
+	faultCase(t, expectError(faultACLCanned, `internal error`), recover(g))
+
+	g = newFakeGateway(t)
+	g.fail("PUT /fault-bucket?acl", 403, "AccessDenied")
+	faultCase(t, expectError(faultACLCanned, `Cannot set the bucket ACL`), recover(g))
+
+	g = newFakeGateway(t)
+	faultCase(t,
+		resource.TestStep{Config: faultACLCanned},
+		resource.TestStep{PreConfig: func() { g.fail("GET /fault-bucket?acl", 500, "InternalError") },
+			Config: faultACLCanned, ExpectError: regexp.MustCompile(`Cannot read the bucket ACL`)},
+		// Explicit form as an in-place update.
+		resource.TestStep{PreConfig: g.clearFaults, Config: faultACLExplicit,
+			Check: resource.TestCheckResourceAttr("versitygw_bucket_acl.test", "access_control_policy.grant.#", "1")},
+		// Back to canned; the grants read back as public-read.
+		resource.TestStep{Config: faultACLCanned,
+			Check: resource.TestCheckResourceAttr("versitygw_bucket_acl.test", "acl", "public-read")},
+		// The ACL reset by an owner change is drift, shown as the grants
+		// the bucket now carries.
+		resource.TestStep{PreConfig: func() { g.resetACL("fault-bucket") },
+			Config: faultACLCanned, PlanOnly: true, ExpectNonEmptyPlan: true},
+		// Bucket gone → resource leaves state.
+		resource.TestStep{PreConfig: func() { g.forgetBucket("fault-bucket") },
+			Config: faultACLCanned, PlanOnly: true, ExpectNonEmptyPlan: true},
+		recover(g),
+	)
+}

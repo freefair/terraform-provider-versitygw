@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 )
 
 // Bucket sub-resources — policy, ACL, versioning and the rest — live on the
@@ -242,4 +243,100 @@ func (c *Client) GetBucketOwnershipControls(ctx context.Context, bucket string) 
 // DeleteBucketOwnershipControls removes the controls.
 func (c *Client) DeleteBucketOwnershipControls(ctx context.Context, bucket string) error {
 	return c.deleteBucketSubresource(ctx, bucket, "ownershipControls", "OwnershipControlsNotFoundError")
+}
+
+// Bucket ACLs. No DELETE exists in S3 and none is ever sent — see the note
+// on versioning above.
+
+// Canned ACLs the gateway accepts (auth.ValidateCannedACL upstream);
+// authenticated-read is not among them.
+const (
+	ACLPrivate         = "private"
+	ACLPublicRead      = "public-read"
+	ACLPublicReadWrite = "public-read-write"
+)
+
+// Grantee types and the one group the gateway knows. The group appears
+// only in what the gateway reads back after a canned public ACL, as
+// <ID>all-users</ID>; writing a Group grantee explicitly — by that ID, by
+// the AWS URI, in any form — answers InternalError (measured).
+const (
+	GranteeCanonicalUser = "CanonicalUser"
+	GranteeGroup         = "Group"
+	GroupAllUsers        = "all-users"
+)
+
+// Grant is one entry of a bucket ACL. For a CanonicalUser the ID is the
+// account's access key; for a Group it is GroupAllUsers.
+type Grant struct {
+	Type       string
+	ID         string
+	Permission string
+}
+
+// BucketACL is what GET ?acl answers.
+type BucketACL struct {
+	Owner  string
+	Grants []Grant
+}
+
+type accessControlPolicy struct {
+	XMLName xml.Name `xml:"AccessControlPolicy"`
+	Owner   struct {
+		ID string `xml:"ID"`
+	} `xml:"Owner"`
+	Grants []struct {
+		Grantee struct {
+			Type string `xml:"http://www.w3.org/2001/XMLSchema-instance type,attr"`
+			ID   string `xml:"ID"`
+		} `xml:"Grantee"`
+		Permission string `xml:"Permission"`
+	} `xml:"AccessControlList>Grant"`
+}
+
+// PutBucketCannedACL applies a canned ACL through the x-amz-acl header.
+func (c *Client) PutBucketCannedACL(ctx context.Context, bucket, canned string) error {
+	return c.putBucketSubresource(ctx, bucket, "acl", map[string]string{"x-amz-acl": canned}, nil)
+}
+
+// PutBucketACL applies an explicit policy. The owner must be the bucket's
+// actual owner — the gateway answers InvalidArgument otherwise — so callers
+// take it from GetBucketACL rather than from the user.
+func (c *Client) PutBucketACL(ctx context.Context, bucket, owner string, grants []Grant) error {
+	// Built by hand: encoding/xml cannot emit the xsi:type attribute with
+	// its namespace declaration the way the gateway's parser expects it.
+	var sb strings.Builder
+	sb.WriteString(`<AccessControlPolicy xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Owner><ID>`)
+	xml.EscapeText(&sb, []byte(owner)) //nolint:errcheck // strings.Builder never fails
+	sb.WriteString(`</ID></Owner><AccessControlList>`)
+	for _, g := range grants {
+		sb.WriteString(`<Grant><Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="`)
+		xml.EscapeText(&sb, []byte(g.Type)) //nolint:errcheck
+		sb.WriteString(`"><ID>`)
+		xml.EscapeText(&sb, []byte(g.ID)) //nolint:errcheck
+		sb.WriteString(`</ID></Grantee><Permission>`)
+		xml.EscapeText(&sb, []byte(g.Permission)) //nolint:errcheck
+		sb.WriteString(`</Permission></Grant>`)
+	}
+	sb.WriteString(`</AccessControlList></AccessControlPolicy>`)
+	return c.putBucketSubresource(ctx, bucket, "acl", nil, []byte(sb.String()))
+}
+
+// GetBucketACL returns the ACL, or nil when the bucket does not exist. A
+// bucket always has one — the gateway answers the owner's FULL_CONTROL
+// grant at minimum.
+func (c *Client) GetBucketACL(ctx context.Context, bucket string) (*BucketACL, error) {
+	payload, err := c.getBucketSubresource(ctx, bucket, "acl", "NoSuchBucket")
+	if err != nil || payload == nil {
+		return nil, err
+	}
+	var acp accessControlPolicy
+	if err := xml.Unmarshal(payload, &acp); err != nil {
+		return nil, fmt.Errorf("parse access control policy: %w", err)
+	}
+	acl := &BucketACL{Owner: acp.Owner.ID}
+	for _, g := range acp.Grants {
+		acl.Grants = append(acl.Grants, Grant{Type: g.Grantee.Type, ID: g.Grantee.ID, Permission: g.Permission})
+	}
+	return acl, nil
 }

@@ -478,3 +478,121 @@ resource "versitygw_bucket_ownership_controls" "test" {
 		},
 	})
 }
+
+func TestAccBucketACL(t *testing.T) {
+	base := `
+resource "versitygw_user" "owner" {
+  access_key = "acc-acl-owner"
+  secret_key = "aclownersecret"
+}
+
+resource "versitygw_user" "reader" {
+  access_key = "acc-acl-reader"
+  secret_key = "aclreadersecret"
+}
+
+resource "versitygw_bucket" "test" {
+  name  = "acc-acl"
+  owner = versitygw_user.owner.access_key
+  depends_on = [versitygw_user.reader]
+}
+
+resource "versitygw_bucket_ownership_controls" "test" {
+  bucket = versitygw_bucket.test.name
+  rule {
+    object_ownership = "ObjectWriter"
+  }
+}
+`
+	canned := func(acl string) string {
+		return base + fmt.Sprintf(`
+resource "versitygw_bucket_acl" "test" {
+  bucket     = versitygw_bucket.test.name
+  acl        = %q
+  depends_on = [versitygw_bucket_ownership_controls.test]
+}
+`, acl)
+	}
+	explicit := base + `
+resource "versitygw_bucket_acl" "test" {
+  bucket = versitygw_bucket.test.name
+  access_control_policy {
+    grant {
+      permission = "READ"
+      grantee {
+        type = "CanonicalUser"
+        id   = versitygw_user.reader.access_key
+      }
+    }
+    grant {
+      permission = "WRITE_ACP"
+      grantee {
+        type = "CanonicalUser"
+        id   = versitygw_user.reader.access_key
+      }
+    }
+  }
+  depends_on = [versitygw_bucket_ownership_controls.test]
+}
+`
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: canned("public-read"),
+				Check:  resource.TestCheckResourceAttr("versitygw_bucket_acl.test", "acl", "public-read"),
+			},
+			{
+				Config: canned("private"),
+				Check:  resource.TestCheckResourceAttr("versitygw_bucket_acl.test", "acl", "private"),
+			},
+			{
+				Config: explicit,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("versitygw_bucket_acl.test", "access_control_policy.grant.#", "2"),
+					resource.TestCheckTypeSetElemNestedAttrs("versitygw_bucket_acl.test", "access_control_policy.grant.*", map[string]string{
+						"permission":   "READ",
+						"grantee.type": "CanonicalUser",
+						"grantee.id":   "acc-acl-reader",
+					}),
+				),
+			},
+			{
+				ResourceName:                         "versitygw_bucket_acl.test",
+				ImportState:                          true,
+				ImportStateId:                        "acc-acl",
+				ImportStateVerify:                    true,
+				ImportStateVerifyIdentifierAttribute: "bucket",
+			},
+		},
+	})
+}
+
+func TestAccBucketACLRefusedWithoutOwnershipControls(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: `
+resource "versitygw_user" "owner" {
+  access_key = "acc-acl-enforced-owner"
+  secret_key = "aclownersecret"
+}
+
+resource "versitygw_bucket" "test" {
+  name  = "acc-acl-enforced"
+  owner = versitygw_user.owner.access_key
+}
+
+resource "versitygw_bucket_acl" "test" {
+  bucket = versitygw_bucket.test.name
+  acl    = "public-read"
+}
+`,
+				ExpectError: regexp.MustCompile(`does not allow ACLs`),
+			},
+		},
+	})
+}

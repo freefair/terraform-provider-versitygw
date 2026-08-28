@@ -701,3 +701,49 @@ func TestOwnershipControlsRoundTrip(t *testing.T) {
 		t.Errorf("deleting absent controls: %v", err)
 	}
 }
+
+func TestBucketACLRoundTrip(t *testing.T) {
+	var sent, header string
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut {
+			b, _ := io.ReadAll(r.Body)
+			sent, header = string(b), r.Header.Get("x-amz-acl")
+			return
+		}
+		_, _ = io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?>
+<AccessControlPolicy xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Owner><ID>alice</ID></Owner><AccessControlList><Grant><Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="CanonicalUser"><ID>alice</ID></Grantee><Permission>FULL_CONTROL</Permission></Grant><Grant><Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="Group"><ID>all-users</ID></Grantee><Permission>READ</Permission></Grant></AccessControlList></AccessControlPolicy>`)
+	})
+	if err := c.PutBucketCannedACL(context.Background(), "b", ACLPublicRead); err != nil {
+		t.Fatalf("PutBucketCannedACL: %v", err)
+	}
+	if header != "public-read" || sent != "" {
+		t.Errorf("canned ACL sent as header=%q body=%q", header, sent)
+	}
+	if err := c.PutBucketACL(context.Background(), "b", "alice", []Grant{{GranteeCanonicalUser, "bob", "READ"}, {GranteeGroup, GroupAllUsers, "READ"}}); err != nil {
+		t.Fatalf("PutBucketACL: %v", err)
+	}
+	for _, want := range []string{`<Owner><ID>alice</ID></Owner>`, `xsi:type="CanonicalUser"><ID>bob</ID>`, `xsi:type="Group"><ID>all-users</ID>`, `<Permission>READ</Permission>`} {
+		if !strings.Contains(sent, want) {
+			t.Errorf("body lacks %s: %s", want, sent)
+		}
+	}
+	acl, err := c.GetBucketACL(context.Background(), "b")
+	if err != nil || acl == nil || acl.Owner != "alice" || len(acl.Grants) != 2 {
+		t.Fatalf("GetBucketACL = %+v, %v", acl, err)
+	}
+	if acl.Grants[1] != (Grant{GranteeGroup, GroupAllUsers, "READ"}) {
+		t.Errorf("group grant parsed as %+v — the xsi:type attribute must survive", acl.Grants[1])
+	}
+
+	c, _ = newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`<Error><Code>NoSuchBucket</Code></Error>`))
+	})
+	if acl, err := c.GetBucketACL(context.Background(), "b"); err != nil || acl != nil {
+		t.Errorf("absent bucket = %+v, %v", acl, err)
+	}
+	c, _ = newTestClient(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, `<<garbage`) })
+	if _, err := c.GetBucketACL(context.Background(), "b"); err == nil {
+		t.Error("garbage accepted as ACL")
+	}
+}
