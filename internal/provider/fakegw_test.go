@@ -27,7 +27,11 @@ type fakeGateway struct {
 	users    map[string]fakeAccount
 	buckets  map[string]string // name -> owner
 	policies map[string][]byte
-	faults   map[string]fault // "METHOD /path[?sub]" -> answer
+	// versioning status per bucket ("" = never configured) and the raw
+	// object lock document, mirroring what posix stores as xattrs.
+	versioning map[string]string
+	locks      map[string][]byte
+	faults     map[string]fault // "METHOD /path[?sub]" -> answer
 }
 
 type fakeAccount struct {
@@ -43,11 +47,13 @@ type fault struct {
 func newFakeGateway(t *testing.T) *fakeGateway {
 	t.Helper()
 	g := &fakeGateway{
-		t:        t,
-		users:    map[string]fakeAccount{},
-		buckets:  map[string]string{},
-		policies: map[string][]byte{},
-		faults:   map[string]fault{},
+		t:          t,
+		users:      map[string]fakeAccount{},
+		buckets:    map[string]string{},
+		policies:   map[string][]byte{},
+		versioning: map[string]string{},
+		locks:      map[string][]byte{},
+		faults:     map[string]fault{},
 	}
 	g.srv = httptest.NewServer(http.HandlerFunc(g.handle))
 	t.Cleanup(g.srv.Close)
@@ -87,6 +93,16 @@ func (g *fakeGateway) forgetBucket(name string) {
 	defer g.mu.Unlock()
 	delete(g.buckets, name)
 	delete(g.policies, name)
+	delete(g.versioning, name)
+	delete(g.locks, name)
+}
+
+// forgetLock drops the lock document, which the real gateway cannot do —
+// but a test needs a way to say "the configuration is gone".
+func (g *fakeGateway) forgetLock(name string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	delete(g.locks, name)
 }
 
 func (g *fakeGateway) handle(w http.ResponseWriter, r *http.Request) {
@@ -94,8 +110,10 @@ func (g *fakeGateway) handle(w http.ResponseWriter, r *http.Request) {
 	defer g.mu.Unlock()
 
 	route := r.Method + " " + r.URL.Path
-	if r.URL.Query().Has("policy") {
-		route += "?policy"
+	for _, sub := range []string{"policy", "versioning", "object-lock"} {
+		if r.URL.Query().Has(sub) {
+			route += "?" + sub
+		}
 	}
 	if f, ok := g.faults[route]; ok {
 		s3Error(w, f.status, f.code)
@@ -221,7 +239,66 @@ func (g *fakeGateway) handle(w http.ResponseWriter, r *http.Request) {
 			s3Error(w, 405, "MethodNotAllowed")
 		}
 
+	case r.URL.Query().Has("versioning"):
+		name := strings.TrimPrefix(r.URL.Path, "/")
+		if _, ok := g.buckets[name]; !ok {
+			s3Error(w, 404, "NoSuchBucket")
+			return
+		}
+		switch r.Method {
+		case http.MethodPut:
+			var cfg struct{ Status string }
+			_ = xml.Unmarshal(body, &cfg)
+			if cfg.Status != "Enabled" && cfg.Status != "Suspended" {
+				s3Error(w, 400, "MalformedXML")
+				return
+			}
+			if _, locked := g.locks[name]; locked {
+				s3Error(w, 400, "InvalidBucketState")
+				return
+			}
+			g.versioning[name] = cfg.Status
+			w.WriteHeader(200)
+		case http.MethodGet:
+			fmt.Fprintf(w, `<VersioningConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Status>%s</Status></VersioningConfiguration>`, g.versioning[name])
+		default:
+			g.t.Errorf("fake gateway: %s on ?versioning", r.Method)
+			s3Error(w, 405, "MethodNotAllowed")
+		}
+
+	case r.URL.Query().Has("object-lock"):
+		name := strings.TrimPrefix(r.URL.Path, "/")
+		if _, ok := g.buckets[name]; !ok {
+			s3Error(w, 404, "NoSuchBucket")
+			return
+		}
+		switch r.Method {
+		case http.MethodPut:
+			if r.Header.Get("Content-MD5") == "" {
+				s3Error(w, 400, "InvalidRequest")
+				return
+			}
+			if g.versioning[name] != "Enabled" {
+				s3Error(w, 409, "InvalidBucketState")
+				return
+			}
+			g.locks[name] = body
+			w.WriteHeader(200)
+		case http.MethodGet:
+			doc, ok := g.locks[name]
+			if !ok {
+				s3Error(w, 404, "ObjectLockConfigurationNotFoundError")
+				return
+			}
+			_, _ = w.Write(doc)
+		default:
+			g.t.Errorf("fake gateway: %s on ?object-lock", r.Method)
+			s3Error(w, 405, "MethodNotAllowed")
+		}
+
 	case r.Method == http.MethodDelete:
+		// The real gateway routes a DELETE with a sub-resource it does not
+		// know here as well — and deletes the bucket. Mirrored on purpose.
 		name := strings.TrimPrefix(r.URL.Path, "/")
 		if _, ok := g.buckets[name]; !ok {
 			s3Error(w, 404, "NoSuchBucket")

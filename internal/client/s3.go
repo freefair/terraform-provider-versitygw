@@ -2,7 +2,11 @@ package client
 
 import (
 	"context"
+	"crypto/md5" // #nosec G501 — S3 mandates MD5 for Content-MD5; it is an integrity check, not a security primitive
+	"encoding/base64"
+	"encoding/xml"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 )
@@ -22,8 +26,18 @@ func (c *Client) s3URL(bucket, subresource string) string {
 // putBucketSubresource replaces a sub-resource. S3 semantics: a PUT on a
 // bucket that already carries the configuration overwrites it, so there is
 // no conflict to detect here.
+//
+// Every PUT carries Content-MD5. The gateway insists on it for object lock
+// (measured: "Missing required header for this request: Content-MD5") and
+// S3 does for several others; sending it always costs nothing and spares
+// each feature from finding out the hard way.
 func (c *Client) putBucketSubresource(ctx context.Context, bucket, subresource string, headers map[string]string, body []byte) error {
-	_, err := c.do(ctx, http.MethodPut, c.s3URL(bucket, subresource), headers, body)
+	sum := md5.Sum(body) // #nosec G401
+	h := map[string]string{"Content-MD5": base64.StdEncoding.EncodeToString(sum[:])}
+	for k, v := range headers {
+		h[k] = v
+	}
+	_, err := c.do(ctx, http.MethodPut, c.s3URL(bucket, subresource), h, body)
 	return err
 }
 
@@ -79,4 +93,99 @@ func (c *Client) GetBucketPolicy(ctx context.Context, bucket string) ([]byte, er
 // DeleteBucketPolicy removes a bucket's policy.
 func (c *Client) DeleteBucketPolicy(ctx context.Context, bucket string) error {
 	return c.deleteBucketSubresource(ctx, bucket, "policy", "NoSuchBucketPolicy")
+}
+
+// Bucket versioning. There is no DELETE — S3 has no way to turn versioning
+// off once it was on, only to suspend it — and none must ever be sent: the
+// gateway routes a DELETE with a sub-resource it does not know to
+// DeleteBucket (measured against v1.7.0; the probe bucket was gone). The
+// same applies to object lock below.
+
+// VersioningStatus values the gateway accepts. "Disabled" is not one of
+// them: the gateway answers MalformedXML.
+const (
+	VersioningEnabled   = "Enabled"
+	VersioningSuspended = "Suspended"
+)
+
+type versioningConfiguration struct {
+	XMLName xml.Name `xml:"VersioningConfiguration"`
+	Status  string   `xml:"Status,omitempty"`
+}
+
+// PutBucketVersioning sets the versioning status. The posix backend refuses
+// this without a versioning directory (VersioningNotConfigured), and refuses
+// to suspend while an object lock configuration is present
+// (InvalidBucketState).
+func (c *Client) PutBucketVersioning(ctx context.Context, bucket, status string) error {
+	body, err := xml.Marshal(versioningConfiguration{Status: status})
+	if err != nil {
+		return fmt.Errorf("marshal versioning configuration: %w", err)
+	}
+	return c.putBucketSubresource(ctx, bucket, "versioning", nil, body)
+}
+
+// GetBucketVersioning returns the status, "" when versioning was never
+// configured (the gateway answers an empty VersioningConfiguration), and
+// ("", nil) when the bucket does not exist.
+func (c *Client) GetBucketVersioning(ctx context.Context, bucket string) (string, error) {
+	payload, err := c.getBucketSubresource(ctx, bucket, "versioning", "NoSuchBucket")
+	if err != nil || payload == nil {
+		return "", err
+	}
+	var cfg versioningConfiguration
+	if err := xml.Unmarshal(payload, &cfg); err != nil {
+		return "", fmt.Errorf("parse versioning configuration: %w", err)
+	}
+	return cfg.Status, nil
+}
+
+// ObjectLockConfiguration mirrors the S3 document. A nil Rule means lock is
+// enabled without a default retention; the gateway then answers an empty
+// <Rule></Rule>, which unmarshals to a Rule with an empty DefaultRetention.
+type ObjectLockConfiguration struct {
+	XMLName           xml.Name        `xml:"ObjectLockConfiguration"`
+	ObjectLockEnabled string          `xml:"ObjectLockEnabled"`
+	Rule              *ObjectLockRule `xml:"Rule,omitempty"`
+}
+
+// ObjectLockRule holds the default retention applied to new objects.
+type ObjectLockRule struct {
+	DefaultRetention *DefaultRetention `xml:"DefaultRetention,omitempty"`
+}
+
+// DefaultRetention is the retention mode and period. Exactly one of Days
+// and Years is set.
+type DefaultRetention struct {
+	Mode  string `xml:"Mode"`
+	Days  int    `xml:"Days,omitempty"`
+	Years int    `xml:"Years,omitempty"`
+}
+
+// PutObjectLockConfiguration sets the object lock configuration. The
+// gateway requires versioning to be Enabled first (InvalidBucketState).
+func (c *Client) PutObjectLockConfiguration(ctx context.Context, bucket string, cfg ObjectLockConfiguration) error {
+	body, err := xml.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("marshal object lock configuration: %w", err)
+	}
+	return c.putBucketSubresource(ctx, bucket, "object-lock", nil, body)
+}
+
+// GetObjectLockConfiguration returns the configuration, or nil when the
+// bucket has none or does not exist. An empty Rule from the gateway is
+// normalised to no Rule.
+func (c *Client) GetObjectLockConfiguration(ctx context.Context, bucket string) (*ObjectLockConfiguration, error) {
+	payload, err := c.getBucketSubresource(ctx, bucket, "object-lock", "ObjectLockConfigurationNotFoundError")
+	if err != nil || payload == nil {
+		return nil, err
+	}
+	var cfg ObjectLockConfiguration
+	if err := xml.Unmarshal(payload, &cfg); err != nil {
+		return nil, fmt.Errorf("parse object lock configuration: %w", err)
+	}
+	if cfg.Rule != nil && cfg.Rule.DefaultRetention == nil {
+		cfg.Rule = nil
+	}
+	return &cfg, nil
 }
