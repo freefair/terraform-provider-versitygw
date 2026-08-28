@@ -4,7 +4,7 @@
 [![Compatibility](https://github.com/freefair/terraform-provider-versitygw/actions/workflows/compat.yml/badge.svg)](https://github.com/freefair/terraform-provider-versitygw/actions/workflows/compat.yml)
 [![Registry](https://img.shields.io/badge/terraform-registry-blueviolet)](https://registry.terraform.io/providers/freefair/versitygw/latest)
 
-Manages accounts and buckets on a [Versity S3 Gateway](https://github.com/versity/versitygw),
+Manages accounts, buckets and bucket policies on a [Versity S3 Gateway](https://github.com/versity/versitygw),
 an Apache-2.0 S3 server that puts an S3 API over a POSIX filesystem, ScoutFS,
 Azure Blob Storage or another S3 server.
 
@@ -64,6 +64,7 @@ resource "versitygw_bucket" "artifacts" {
 |---|---|
 | [`versitygw_user`](docs/resources/user.md) | An account in the gateway's IAM service |
 | [`versitygw_bucket`](docs/resources/bucket.md) | A bucket and the account that owns it |
+| [`versitygw_bucket_policy`](docs/resources/bucket_policy.md) | The policy of a bucket |
 
 | Data source | Description |
 |---|---|
@@ -76,8 +77,8 @@ Full argument reference on the
 ### Roadmap
 
 The admin API is covered completely. What the gateway offers per bucket over
-the S3 API — policy, ACL, versioning, object lock, tags, CORS, website,
-ownership controls — is not yet, and is planned as one resource each, shaped
+the S3 API — ACL, versioning, object lock, tags, CORS, website, ownership
+controls — is not yet (policy is), and is planned as one resource each, shaped
 like the corresponding `aws_s3_bucket_*` resource. See
 [`docs/plans/`](docs/plans/README.md) for the plans and for what is
 deliberately left out.

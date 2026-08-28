@@ -43,7 +43,7 @@ func (p *versitygwProvider) Metadata(_ context.Context, _ provider.MetadataReque
 
 func (p *versitygwProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp *provider.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Manages accounts and buckets on a " +
+		MarkdownDescription: "Manages accounts, buckets and bucket policies on a " +
 			"[Versity S3 Gateway](https://github.com/versity/versitygw).\n\n" +
 			"The gateway keeps account management behind a separate admin API, so this " +
 			"provider needs credentials for an `admin` or `root` account — a regular " +
@@ -162,6 +162,7 @@ func (p *versitygwProvider) Resources(_ context.Context) []func() resource.Resou
 	return []func() resource.Resource{
 		NewUserResource,
 		NewBucketResource,
+		NewBucketPolicyResource,
 	}
 }
 

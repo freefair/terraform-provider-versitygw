@@ -24,9 +24,10 @@ API with the same client it already uses for the admin API.
 func (c *Client) s3URL(bucket, subresource string) string
 
 // putBucketSubresource, getBucketSubresource, deleteBucketSubresource wrap do()
-// for PUT/GET/DELETE ?<subresource>. GET returns (nil, nil) when the gateway
-// answers with the sub-resource's own "not found" code, so callers keep the
-// (nil, nil) == absent convention GetUser/GetBucket already use.
+// for PUT/GET/DELETE ?<subresource>. GET returns (nil, nil) only when the
+// gateway answers with the sub-resource's own "not found" code or NoSuchBucket
+// — never on a bare 404, which a proxy or a wrong path produces — so callers
+// keep the (nil, nil) == absent convention GetUser/GetBucket already use.
 ```
 
 Typed wrappers per feature live in the same file and are added by each plan
