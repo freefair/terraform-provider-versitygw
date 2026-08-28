@@ -81,8 +81,8 @@ Full argument reference on the
 ### Roadmap
 
 The admin API is covered completely. What the gateway offers per bucket over
-the S3 API — tags, CORS, website — is not yet (policy, versioning, object
-lock, ownership controls and ACL are), and is planned as one resource each, shaped
+the S3 API — CORS, website — is not yet (policy, versioning, object lock,
+ownership controls, ACL and tags are), and is planned as one resource each, shaped
 like the corresponding `aws_s3_bucket_*` resource. See
 [`docs/plans/`](docs/plans/README.md) for the plans and for what is
 deliberately left out.

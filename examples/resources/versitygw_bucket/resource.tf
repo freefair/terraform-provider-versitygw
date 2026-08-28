@@ -9,6 +9,12 @@ resource "versitygw_user" "ci" {
 resource "versitygw_bucket" "artifacts" {
   name  = "build-artifacts"
   owner = versitygw_user.ci.access_key
+
+  # Tags survive an owner change; only ACL and policy are reset.
+  tags = {
+    team = "platform"
+    cost = "ci"
+  }
 }
 
 # Handing a bucket to a different account is an in-place update — and it

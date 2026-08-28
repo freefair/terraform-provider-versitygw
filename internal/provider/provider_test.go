@@ -596,3 +596,62 @@ resource "versitygw_bucket_acl" "test" {
 		},
 	})
 }
+
+func TestAccBucketTags(t *testing.T) {
+	cfg := func(owner, tags string) string {
+		return fmt.Sprintf(`
+resource "versitygw_user" "one" {
+  access_key = "acc-tags-one"
+  secret_key = "tagsonesecret"
+}
+
+resource "versitygw_user" "two" {
+  access_key = "acc-tags-two"
+  secret_key = "tagstwosecret"
+}
+
+resource "versitygw_bucket" "test" {
+  name  = "acc-tagged"
+  owner = %s
+  %s
+  depends_on = [versitygw_user.one, versitygw_user.two]
+}
+`, owner, tags)
+	}
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: cfg("versitygw_user.one.access_key", `tags = { team = "platform", cost = "ci" }`),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("versitygw_bucket.test", "tags.%", "2"),
+					resource.TestCheckResourceAttr("versitygw_bucket.test", "tags.team", "platform"),
+				),
+			},
+			{
+				// Change one, drop one; the owner change in the same step
+				// must not touch the tags.
+				Config: cfg("versitygw_user.two.access_key", `tags = { team = "data" }`),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("versitygw_bucket.test", "owner", "acc-tags-two"),
+					resource.TestCheckResourceAttr("versitygw_bucket.test", "tags.%", "1"),
+					resource.TestCheckResourceAttr("versitygw_bucket.test", "tags.team", "data"),
+				),
+			},
+			{
+				ResourceName:                         "versitygw_bucket.test",
+				ImportState:                          true,
+				ImportStateId:                        "acc-tagged",
+				ImportStateVerify:                    true,
+				ImportStateVerifyIdentifierAttribute: "name",
+			},
+			{
+				// No tags at all deletes the tag set; the default keeps the
+				// attribute an empty map rather than null.
+				Config: cfg("versitygw_user.two.access_key", ""),
+				Check:  resource.TestCheckResourceAttr("versitygw_bucket.test", "tags.%", "0"),
+			},
+		},
+	})
+}

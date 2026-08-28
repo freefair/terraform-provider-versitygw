@@ -36,7 +36,10 @@ type fakeGateway struct {
 	ownership map[string]string
 	// explicit ACL grants per bucket, without the owner's implicit
 	// FULL_CONTROL, which GET adds the way the gateway does.
-	acls   map[string][]fakeGrant
+	acls map[string][]fakeGrant
+	// tag set per bucket; absent key = NoSuchTagSet, present-but-empty is
+	// a stored empty set (the gateway distinguishes the two).
+	tags   map[string]map[string]string
 	faults map[string]fault // "METHOD /path[?sub]" -> answer
 }
 
@@ -63,6 +66,7 @@ func newFakeGateway(t *testing.T) *fakeGateway {
 		locks:      map[string][]byte{},
 		ownership:  map[string]string{},
 		acls:       map[string][]fakeGrant{},
+		tags:       map[string]map[string]string{},
 		faults:     map[string]fault{},
 	}
 	g.srv = httptest.NewServer(http.HandlerFunc(g.handle))
@@ -107,6 +111,7 @@ func (g *fakeGateway) forgetBucket(name string) {
 	delete(g.locks, name)
 	delete(g.ownership, name)
 	delete(g.acls, name)
+	delete(g.tags, name)
 }
 
 // resetACL is what change-bucket-owner does to the ACL upstream.
@@ -145,7 +150,7 @@ func (g *fakeGateway) handle(w http.ResponseWriter, r *http.Request) {
 	defer g.mu.Unlock()
 
 	route := r.Method + " " + r.URL.Path
-	for _, sub := range []string{"policy", "versioning", "object-lock", "ownershipControls", "acl"} {
+	for _, sub := range []string{"policy", "versioning", "object-lock", "ownershipControls", "acl", "tagging"} {
 		if r.URL.Query().Has(sub) {
 			route += "?" + sub
 		}
@@ -430,6 +435,48 @@ func (g *fakeGateway) handle(w http.ResponseWriter, r *http.Request) {
 			_, _ = io.WriteString(w, sb.String())
 		default:
 			g.t.Errorf("fake gateway: %s on ?acl", r.Method)
+			s3Error(w, 405, "MethodNotAllowed")
+		}
+
+	case r.URL.Query().Has("tagging"):
+		name := strings.TrimPrefix(r.URL.Path, "/")
+		if _, ok := g.buckets[name]; !ok {
+			s3Error(w, 404, "NoSuchBucket")
+			return
+		}
+		switch r.Method {
+		case http.MethodPut:
+			var doc struct {
+				Tags []struct{ Key, Value string } `xml:"TagSet>Tag"`
+			}
+			if err := xml.Unmarshal(body, &doc); err != nil {
+				s3Error(w, 400, "MalformedXML")
+				return
+			}
+			set := map[string]string{}
+			for _, t := range doc.Tags {
+				set[t.Key] = t.Value
+			}
+			g.tags[name] = set
+			w.WriteHeader(200)
+		case http.MethodGet:
+			set, ok := g.tags[name]
+			if !ok {
+				s3Error(w, 404, "NoSuchTagSet")
+				return
+			}
+			var sb strings.Builder
+			sb.WriteString(`<Tagging><TagSet>`)
+			for k, v := range set {
+				fmt.Fprintf(&sb, `<Tag><Key>%s</Key><Value>%s</Value></Tag>`, k, v)
+			}
+			sb.WriteString(`</TagSet></Tagging>`)
+			_, _ = io.WriteString(w, sb.String())
+		case http.MethodDelete:
+			delete(g.tags, name)
+			w.WriteHeader(204)
+		default:
+			g.t.Errorf("fake gateway: %s on ?tagging", r.Method)
 			s3Error(w, 405, "MethodNotAllowed")
 		}
 

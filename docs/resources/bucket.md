@@ -33,6 +33,19 @@ resource "versitygw_bucket" "artifacts" {
   alphanumerically. Immutable — changing it forces replacement.
 - `owner` (String) Access key ID of the owning account.
 
+### Optional
+
+- `tags` (Map of String) Tags on the bucket, as on `aws_s3_bucket`. Defaults
+  to an empty map, so `tags = {}` and no `tags` at all mean the same thing:
+  no tag set on the gateway. Removing every tag deletes the tag set.
+
+## Tags survive an owner change
+
+Unlike the ACL and the policy, the tag set is not touched by
+`change-bucket-owner`. Changing `owner` and `tags` in one apply performs the
+ownership change first; if the tag write then fails, the new owner is kept in
+state and the next apply retries only the tags.
+
 ## Changing the owner discards the ACL and the policy
 
 ~> This is upstream behaviour, not a provider limitation. When ownership moves,

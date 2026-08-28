@@ -565,3 +565,36 @@ resource "versitygw_bucket_acl" "test" {
 		recover(g),
 	)
 }
+
+const faultBucketTagged = faultUser + `
+resource "versitygw_bucket" "test" {
+  name  = "fault-bucket"
+  owner = versitygw_user.test.access_key
+  tags  = { k = "v" }
+}
+`
+
+func TestFaultBucketTags(t *testing.T) {
+	// Tags failing after the bucket was created: the bucket stays in
+	// state, the next apply retries only the tags.
+	g := newFakeGateway(t)
+	g.fail("PUT /fault-bucket?tagging", 500, "InternalError")
+	faultCase(t,
+		expectError(faultBucketTagged, `Cannot set the bucket tags`),
+		resource.TestStep{PreConfig: g.clearFaults, Config: faultBucketTagged,
+			Check: resource.TestCheckResourceAttr("versitygw_bucket.test", "tags.k", "v")},
+		recover(g),
+	)
+
+	g = newFakeGateway(t)
+	faultCase(t,
+		resource.TestStep{Config: faultBucketTagged},
+		resource.TestStep{PreConfig: func() { g.fail("GET /fault-bucket?tagging", 500, "InternalError") },
+			Config: faultBucketTagged, ExpectError: regexp.MustCompile(`Cannot read the bucket tags`)},
+		resource.TestStep{PreConfig: func() { g.clearFaults(); g.fail("DELETE /fault-bucket?tagging", 500, "InternalError") },
+			Config: faultBucket, ExpectError: regexp.MustCompile(`Cannot set the bucket tags`)},
+		resource.TestStep{PreConfig: g.clearFaults, Config: faultBucket,
+			Check: resource.TestCheckResourceAttr("versitygw_bucket.test", "tags.%", "0")},
+		recover(g),
+	)
+}
