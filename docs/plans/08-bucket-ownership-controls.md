@@ -39,6 +39,15 @@ resource "versitygw_bucket_ownership_controls" "artifacts" {
   does, cross-reference from plan 02's docs.
 - Owner change does not touch it (plan 00).
 
+## Measured (v1.7.0, implementation)
+
+- Fresh bucket: `GET ?ownershipControls` answers `BucketOwnerEnforced`
+  without anyone having set it. In that state every `PUT ?acl` answers
+  `AccessControlListNotSupported` — ACL (plan 02) depends on this resource.
+- `DELETE ?ownershipControls` works and leaves the bucket alone; afterwards
+  `GET` answers `OwnershipControlsNotFoundError`.
+- `ObjectWriter` and `BucketOwnerPreferred` both allow ACLs.
+
 ## Tests
 
 1. `BucketOwnerEnforced` → read back.

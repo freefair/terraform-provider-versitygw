@@ -31,7 +31,10 @@ type fakeGateway struct {
 	// object lock document, mirroring what posix stores as xattrs.
 	versioning map[string]string
 	locks      map[string][]byte
-	faults     map[string]fault // "METHOD /path[?sub]" -> answer
+	// ownership per bucket; a fresh bucket answers BucketOwnerEnforced and
+	// a deleted entry answers not-found — exactly what the gateway does.
+	ownership map[string]string
+	faults    map[string]fault // "METHOD /path[?sub]" -> answer
 }
 
 type fakeAccount struct {
@@ -53,6 +56,7 @@ func newFakeGateway(t *testing.T) *fakeGateway {
 		policies:   map[string][]byte{},
 		versioning: map[string]string{},
 		locks:      map[string][]byte{},
+		ownership:  map[string]string{},
 		faults:     map[string]fault{},
 	}
 	g.srv = httptest.NewServer(http.HandlerFunc(g.handle))
@@ -95,6 +99,14 @@ func (g *fakeGateway) forgetBucket(name string) {
 	delete(g.policies, name)
 	delete(g.versioning, name)
 	delete(g.locks, name)
+	delete(g.ownership, name)
+}
+
+// forgetOwnership drops the ownership entry, as a DELETE from the CLI would.
+func (g *fakeGateway) forgetOwnership(name string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	delete(g.ownership, name)
 }
 
 // hasBucket reports whether the bucket still exists — the check that proves
@@ -119,7 +131,7 @@ func (g *fakeGateway) handle(w http.ResponseWriter, r *http.Request) {
 	defer g.mu.Unlock()
 
 	route := r.Method + " " + r.URL.Path
-	for _, sub := range []string{"policy", "versioning", "object-lock"} {
+	for _, sub := range []string{"policy", "versioning", "object-lock", "ownershipControls"} {
 		if r.URL.Query().Has(sub) {
 			route += "?" + sub
 		}
@@ -219,6 +231,7 @@ func (g *fakeGateway) handle(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		g.buckets[name] = r.Header.Get("x-vgw-owner")
+		g.ownership[name] = "BucketOwnerEnforced"
 		w.WriteHeader(201)
 
 	case r.URL.Query().Has("policy"):
@@ -302,6 +315,35 @@ func (g *fakeGateway) handle(w http.ResponseWriter, r *http.Request) {
 			_, _ = w.Write(doc)
 		default:
 			g.t.Errorf("fake gateway: %s on ?object-lock", r.Method)
+			s3Error(w, 405, "MethodNotAllowed")
+		}
+
+	case r.URL.Query().Has("ownershipControls"):
+		name := strings.TrimPrefix(r.URL.Path, "/")
+		if _, ok := g.buckets[name]; !ok {
+			s3Error(w, 404, "NoSuchBucket")
+			return
+		}
+		switch r.Method {
+		case http.MethodPut:
+			var cfg struct {
+				Rule struct{ ObjectOwnership string }
+			}
+			_ = xml.Unmarshal(body, &cfg)
+			g.ownership[name] = cfg.Rule.ObjectOwnership
+			w.WriteHeader(200)
+		case http.MethodGet:
+			o, ok := g.ownership[name]
+			if !ok {
+				s3Error(w, 404, "OwnershipControlsNotFoundError")
+				return
+			}
+			fmt.Fprintf(w, `<OwnershipControls xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Rule><ObjectOwnership>%s</ObjectOwnership></Rule></OwnershipControls>`, o)
+		case http.MethodDelete:
+			delete(g.ownership, name)
+			w.WriteHeader(204)
+		default:
+			g.t.Errorf("fake gateway: %s on ?ownershipControls", r.Method)
 			s3Error(w, 405, "MethodNotAllowed")
 		}
 

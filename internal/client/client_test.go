@@ -653,3 +653,51 @@ func TestObjectLockRoundTrip(t *testing.T) {
 		t.Error("garbage accepted as versioning configuration")
 	}
 }
+
+func TestOwnershipControlsRoundTrip(t *testing.T) {
+	var sent, method string
+	stored := `<OwnershipControls><Rule><ObjectOwnership>BucketOwnerEnforced</ObjectOwnership></Rule></OwnershipControls>`
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		method = r.Method
+		switch r.Method {
+		case http.MethodPut:
+			b, _ := io.ReadAll(r.Body)
+			sent = string(b)
+		case http.MethodGet:
+			_, _ = io.WriteString(w, stored)
+		case http.MethodDelete:
+			w.WriteHeader(http.StatusNoContent)
+		}
+	})
+	if err := c.PutBucketOwnershipControls(context.Background(), "b", OwnershipObjectWriter); err != nil {
+		t.Fatalf("PutBucketOwnershipControls: %v", err)
+	}
+	if sent != `<OwnershipControls><Rule><ObjectOwnership>ObjectWriter</ObjectOwnership></Rule></OwnershipControls>` {
+		t.Errorf("body = %s", sent)
+	}
+	if got, err := c.GetBucketOwnershipControls(context.Background(), "b"); err != nil || got != OwnershipBucketOwnerEnforced {
+		t.Errorf("Get = %q, %v", got, err)
+	}
+	stored = `<OwnershipControls></OwnershipControls>`
+	if got, err := c.GetBucketOwnershipControls(context.Background(), "b"); err != nil || got != "" {
+		t.Errorf("no rule = %q, %v; want empty", got, err)
+	}
+	stored = `<<garbage`
+	if _, err := c.GetBucketOwnershipControls(context.Background(), "b"); err == nil {
+		t.Error("garbage accepted")
+	}
+	if err := c.DeleteBucketOwnershipControls(context.Background(), "b"); err != nil || method != http.MethodDelete {
+		t.Errorf("delete: %v (method %s)", err, method)
+	}
+
+	c, _ = newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`<Error><Code>OwnershipControlsNotFoundError</Code></Error>`))
+	})
+	if got, err := c.GetBucketOwnershipControls(context.Background(), "b"); err != nil || got != "" {
+		t.Errorf("absent = %q, %v", got, err)
+	}
+	if err := c.DeleteBucketOwnershipControls(context.Background(), "b"); err != nil {
+		t.Errorf("deleting absent controls: %v", err)
+	}
+}

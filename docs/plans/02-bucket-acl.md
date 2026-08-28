@@ -5,6 +5,29 @@ coarser tool, and a gateway can be started with `--disable-acl`
 (`VGW_DISABLE_ACL`), which "ignores all ACL headers" — on such a gateway this
 resource cannot work and must say so.
 
+## Depends on plan 08 — measured
+
+A fresh bucket is `BucketOwnerEnforced` and answers every `PUT ?acl` with
+`AccessControlListNotSupported`. The resource must document
+`versitygw_bucket_ownership_controls` (`ObjectWriter` / `BucketOwnerPreferred`)
+plus `depends_on` as a prerequisite, and map that error code to a diagnostic
+naming it.
+
+Further measurements (v1.7.0):
+- Canned ACLs accepted: `private`, `public-read`, `public-read-write`;
+  `authenticated-read` → `InvalidArgument`.
+- `GET ?acl` always lists the owner's `FULL_CONTROL` grant first; canned
+  `public-read` adds a `Group` grantee with `<ID>all-users</ID>` (READ),
+  `public-read-write` adds READ and WRITE. **The AWS `AllUsers` URI is
+  rejected** (`MalformedACLError`); on input the group is `xsi:type="Group"`
+  with `<ID>all-users</ID>`.
+- `Owner.ID` must be the bucket's owner: another account → `InvalidArgument:
+  Invalid id`. So `owner` is computed from the bucket, not user input.
+- A grant for a non-existent account → HTTP 500 `InternalError` (upstream
+  bug; map to a diagnostic suggesting the account may not exist).
+- An empty grant list resets to owner-only FULL_CONTROL; the owner grant is
+  always present on read even if not sent.
+
 ## Schema
 
 Mirror the AWS resource: either a canned ACL or an explicit policy, mutually
