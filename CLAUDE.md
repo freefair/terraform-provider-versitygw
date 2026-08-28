@@ -85,7 +85,10 @@ it cannot see the image pin.
 
 - **Codex review before the PR.** When a task is complete, run a review through
   the Codex MCP (`mcp__codex__codex`, model `gpt-5.6-sol` — the default in `~/.codex/config.toml`; the short name `sol` is rejected — reasoning effort `high`) on the diff and
-  act on its findings before opening the pull request.
+  act on its findings before opening the pull request. Tell Codex explicitly
+  that it must only review — no edits, no commands beyond reading — and that
+  the findings must be its final answer, not a remark in passing; otherwise it
+  starts fixing things or buries the result.
 - **Self-merge is allowed** when the acceptance tests against a real
   `versitygw` in Docker are green and coverage is around 100 %. Reasonable
   beats absolute: do what is needed, but a solid 90 % is better than a
