@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -39,7 +40,9 @@ type fakeGateway struct {
 	acls map[string][]fakeGrant
 	// tag set per bucket; absent key = NoSuchTagSet, present-but-empty is
 	// a stored empty set (the gateway distinguishes the two).
-	tags   map[string]map[string]string
+	tags map[string]map[string]string
+	// raw CORS XML per bucket, as posix stores it; absent = NoSuchCORSConfiguration.
+	cors   map[string][]byte
 	faults map[string]fault // "METHOD /path[?sub]" -> answer
 }
 
@@ -67,6 +70,7 @@ func newFakeGateway(t *testing.T) *fakeGateway {
 		ownership:  map[string]string{},
 		acls:       map[string][]fakeGrant{},
 		tags:       map[string]map[string]string{},
+		cors:       map[string][]byte{},
 		faults:     map[string]fault{},
 	}
 	g.srv = httptest.NewServer(http.HandlerFunc(g.handle))
@@ -112,6 +116,14 @@ func (g *fakeGateway) forgetBucket(name string) {
 	delete(g.ownership, name)
 	delete(g.acls, name)
 	delete(g.tags, name)
+	delete(g.cors, name)
+}
+
+// forgetCORS drops the CORS configuration, as a DELETE from the CLI would.
+func (g *fakeGateway) forgetCORS(name string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	delete(g.cors, name)
 }
 
 // resetACL is what change-bucket-owner does to the ACL upstream.
@@ -150,7 +162,7 @@ func (g *fakeGateway) handle(w http.ResponseWriter, r *http.Request) {
 	defer g.mu.Unlock()
 
 	route := r.Method + " " + r.URL.Path
-	for _, sub := range []string{"policy", "versioning", "object-lock", "ownershipControls", "acl", "tagging"} {
+	for _, sub := range []string{"policy", "versioning", "object-lock", "ownershipControls", "acl", "tagging", "cors"} {
 		if r.URL.Query().Has(sub) {
 			route += "?" + sub
 		}
@@ -480,6 +492,55 @@ func (g *fakeGateway) handle(w http.ResponseWriter, r *http.Request) {
 			s3Error(w, 405, "MethodNotAllowed")
 		}
 
+	case r.URL.Query().Has("cors"):
+		name := strings.TrimPrefix(r.URL.Path, "/")
+		if _, ok := g.buckets[name]; !ok {
+			s3Error(w, 404, "NoSuchBucket")
+			return
+		}
+		switch r.Method {
+		case http.MethodPut:
+			// Validation as measured: unknown method → InvalidRequest, a
+			// rule without origin or no rule at all → MalformedXML.
+			var doc struct {
+				Rules []struct {
+					AllowedMethod []string
+					AllowedOrigin []string
+				} `xml:"CORSRule"`
+			}
+			if err := xml.Unmarshal(body, &doc); err != nil || len(doc.Rules) == 0 {
+				s3Error(w, 400, "MalformedXML")
+				return
+			}
+			for _, rule := range doc.Rules {
+				if len(rule.AllowedOrigin) == 0 {
+					s3Error(w, 400, "MalformedXML")
+					return
+				}
+				for _, m := range rule.AllowedMethod {
+					if !slices.Contains([]string{"GET", "HEAD", "PUT", "POST", "DELETE"}, m) {
+						s3Error(w, 400, "InvalidRequest")
+						return
+					}
+				}
+			}
+			g.cors[name] = body
+			w.WriteHeader(200)
+		case http.MethodGet:
+			doc, ok := g.cors[name]
+			if !ok {
+				s3Error(w, 404, "NoSuchCORSConfiguration")
+				return
+			}
+			_, _ = w.Write(doc)
+		case http.MethodDelete:
+			delete(g.cors, name)
+			w.WriteHeader(204)
+		default:
+			g.t.Errorf("fake gateway: %s on ?cors", r.Method)
+			s3Error(w, 405, "MethodNotAllowed")
+		}
+
 	case r.Method == http.MethodDelete:
 		// The real gateway routes a DELETE with a sub-resource it does not
 		// know (?versioning, ?object-lock) here as well — and deletes the
@@ -498,6 +559,7 @@ func (g *fakeGateway) handle(w http.ResponseWriter, r *http.Request) {
 		delete(g.locks, name)
 		delete(g.acls, name)
 		delete(g.tags, name)
+		delete(g.cors, name)
 		w.WriteHeader(204)
 
 	default:

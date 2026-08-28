@@ -390,3 +390,52 @@ func (c *Client) GetBucketTagging(ctx context.Context, bucket string) (map[strin
 func (c *Client) DeleteBucketTagging(ctx context.Context, bucket string) error {
 	return c.deleteBucketSubresource(ctx, bucket, "tagging", "NoSuchTagSet")
 }
+
+// CORS. A real DELETE, rules come back in the order they were sent, and the
+// gateway validates methods (InvalidRequest) and shape (MalformedXML) on PUT.
+
+// CORSMethods are the methods the gateway accepts in a rule.
+var CORSMethods = []string{"GET", "HEAD", "PUT", "POST", "DELETE"}
+
+// CORSRule is one rule of a bucket's CORS configuration.
+type CORSRule struct {
+	ID             string   `xml:"ID,omitempty"`
+	AllowedHeaders []string `xml:"AllowedHeader"`
+	AllowedMethods []string `xml:"AllowedMethod"`
+	AllowedOrigins []string `xml:"AllowedOrigin"`
+	ExposeHeaders  []string `xml:"ExposeHeader"`
+	MaxAgeSeconds  *int64   `xml:"MaxAgeSeconds,omitempty"`
+}
+
+type corsConfiguration struct {
+	XMLName xml.Name   `xml:"CORSConfiguration"`
+	Rules   []CORSRule `xml:"CORSRule"`
+}
+
+// PutBucketCORS replaces the CORS configuration.
+func (c *Client) PutBucketCORS(ctx context.Context, bucket string, rules []CORSRule) error {
+	body, err := xml.Marshal(corsConfiguration{Rules: rules})
+	if err != nil {
+		return fmt.Errorf("marshal cors: %w", err)
+	}
+	return c.putBucketSubresource(ctx, bucket, "cors", nil, body)
+}
+
+// GetBucketCORS returns the rules, or nil when the bucket has no CORS
+// configuration or does not exist.
+func (c *Client) GetBucketCORS(ctx context.Context, bucket string) ([]CORSRule, error) {
+	payload, err := c.getBucketSubresource(ctx, bucket, "cors", "NoSuchCORSConfiguration")
+	if err != nil || payload == nil {
+		return nil, err
+	}
+	var doc corsConfiguration
+	if err := xml.Unmarshal(payload, &doc); err != nil {
+		return nil, fmt.Errorf("parse cors: %w", err)
+	}
+	return doc.Rules, nil
+}
+
+// DeleteBucketCORS removes the configuration.
+func (c *Client) DeleteBucketCORS(ctx context.Context, bucket string) error {
+	return c.deleteBucketSubresource(ctx, bucket, "cors", "NoSuchCORSConfiguration")
+}

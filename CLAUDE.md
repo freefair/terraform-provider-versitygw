@@ -11,6 +11,7 @@ manages IAM accounts and buckets through the gateway's admin API.
 - `internal/provider/provider.go` — provider definition, schema, env fallbacks
 - `internal/provider/resource_user.go` — `versitygw_user`
 - `internal/provider/resource_bucket.go` — `versitygw_bucket` (incl. `tags`)
+- `internal/provider/resource_bucket_cors_configuration.go` — `versitygw_bucket_cors_configuration`
 - `internal/provider/resource_bucket_policy.go` — `versitygw_bucket_policy`
 - `internal/provider/resource_bucket_versioning.go` — `versitygw_bucket_versioning`
 - `internal/provider/resource_bucket_object_lock_configuration.go` — `versitygw_bucket_object_lock_configuration`
@@ -61,6 +62,9 @@ code without re-checking them breaks things silently.
 - **`DELETE ?tagging` is real; an empty `<TagSet/>` is stored, not deleted.**
   `GET` then answers 200 with no tags instead of `NoSuchTagSet`; the client
   folds both into an empty map.
+- **`DELETE ?cors` is real, and `PUT ?cors` validates.** Unsupported method →
+  `InvalidRequest`, rule without origin or no rule → `MalformedXML`. Rules
+  come back in order, elements within a rule reordered.
 - **There is no admin route to delete a bucket.** Deletion goes to the S3 API,
   which refuses a non-empty bucket.
 - **`change-bucket-owner` discards the bucket's ACL and policy — and nothing

@@ -2,6 +2,7 @@ package provider_test
 
 import (
 	"fmt"
+	"net/http"
 	"os"
 	"regexp"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/terraform"
 
 	"github.com/freefair/terraform-provider-versitygw/internal/provider"
 )
@@ -659,6 +661,126 @@ resource "versitygw_bucket" "test" {
 				// attribute an empty map rather than null.
 				Config: cfg("versitygw_user.two.access_key", ""),
 				Check:  resource.TestCheckResourceAttr("versitygw_bucket.test", "tags.%", "0"),
+			},
+		},
+	})
+}
+
+func TestAccBucketCORSConfiguration(t *testing.T) {
+	cfg := func(rules string) string {
+		return `
+resource "versitygw_user" "owner" {
+  access_key = "acc-cors-owner"
+  secret_key = "corsownersecret"
+}
+
+resource "versitygw_bucket" "test" {
+  name  = "acc-cors"
+  owner = versitygw_user.owner.access_key
+}
+
+resource "versitygw_bucket_cors_configuration" "test" {
+  bucket = versitygw_bucket.test.name
+` + rules + `
+}
+`
+	}
+	two := `
+  cors_rule {
+    id              = "browser-uploads"
+    allowed_headers = ["*"]
+    allowed_methods = ["PUT", "POST"]
+    allowed_origins = ["https://app.example.com"]
+    expose_headers  = ["ETag"]
+    max_age_seconds = 3000
+  }
+
+  cors_rule {
+    allowed_methods = ["GET"]
+    allowed_origins = ["*"]
+  }
+`
+	edited := `
+  cors_rule {
+    id              = "browser-uploads"
+    allowed_headers = ["*"]
+    allowed_methods = ["PUT", "POST"]
+    allowed_origins = ["https://app.example.com", "https://admin.example.com"]
+    expose_headers  = ["ETag"]
+    max_age_seconds = 3000
+  }
+
+  cors_rule {
+    allowed_methods = ["GET"]
+    allowed_origins = ["*"]
+  }
+`
+	one := `
+  cors_rule {
+    allowed_methods = ["GET"]
+    allowed_origins = ["*"]
+  }
+`
+	// A preflight from the browser's point of view: proves the gateway
+	// applies the configuration rather than merely storing it.
+	preflight := func(origin, method string, wantStatus int) resource.TestCheckFunc {
+		return func(*terraform.State) error {
+			req, err := http.NewRequest(http.MethodOptions, os.Getenv("VERSITYGW_ENDPOINT")+"/acc-cors/key", nil)
+			if err != nil {
+				return err
+			}
+			req.Header.Set("Origin", origin)
+			req.Header.Set("Access-Control-Request-Method", method)
+			res, err := http.DefaultClient.Do(req)
+			if err != nil {
+				return err
+			}
+			defer res.Body.Close()
+			if res.StatusCode != wantStatus {
+				return fmt.Errorf("preflight %s %s: status %d, want %d", origin, method, res.StatusCode, wantStatus)
+			}
+			if wantStatus == 200 && res.Header.Get("Access-Control-Allow-Origin") != origin {
+				return fmt.Errorf("preflight: Access-Control-Allow-Origin = %q", res.Header.Get("Access-Control-Allow-Origin"))
+			}
+			return nil
+		}
+	}
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: cfg(two),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("versitygw_bucket_cors_configuration.test", "cors_rule.#", "2"),
+					resource.TestCheckResourceAttr("versitygw_bucket_cors_configuration.test", "cors_rule.0.id", "browser-uploads"),
+					resource.TestCheckResourceAttr("versitygw_bucket_cors_configuration.test", "cors_rule.0.max_age_seconds", "3000"),
+					resource.TestCheckResourceAttr("versitygw_bucket_cors_configuration.test", "cors_rule.1.allowed_origins.0", "*"),
+					resource.TestCheckNoResourceAttr("versitygw_bucket_cors_configuration.test", "cors_rule.1.id"),
+					preflight("https://app.example.com", "PUT", 200),
+					preflight("https://evil.example", "PUT", 403),
+				),
+			},
+			{
+				Config: cfg(edited),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("versitygw_bucket_cors_configuration.test", "cors_rule.0.allowed_origins.#", "2"),
+					preflight("https://admin.example.com", "POST", 200),
+				),
+			},
+			{
+				Config: cfg(one),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("versitygw_bucket_cors_configuration.test", "cors_rule.#", "1"),
+					preflight("https://app.example.com", "PUT", 403),
+				),
+			},
+			{
+				ResourceName:                         "versitygw_bucket_cors_configuration.test",
+				ImportState:                          true,
+				ImportStateId:                        "acc-cors",
+				ImportStateVerify:                    true,
+				ImportStateVerifyIdentifierAttribute: "bucket",
 			},
 		},
 	})

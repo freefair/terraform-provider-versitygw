@@ -49,6 +49,25 @@ matters to S3 (first matching rule wins), so a list, not a set.
   `stringvalidator.OneOf` in the schema so a typo fails at plan time.
 - Owner change does not touch CORS (plan 00).
 
+## Measured (v1.7.0, implementation)
+
+- `DELETE ?cors` is a real route; the bucket survives and then answers
+  `NoSuchCORSConfiguration`. Deleting an absent configuration answers 204.
+- `PUT` validates: an unsupported method (`PATCH`) → `InvalidRequest` 400
+  "Found unsupported HTTP method in CORS config"; a rule without
+  `AllowedOrigin`, no rule at all, or unparsable XML → `MalformedXML` 400.
+  The schema refuses the same at plan time.
+- `GET` returns the rules in the order they were sent, with the elements
+  inside a rule reordered (methods, headers, expose, origins, id, max-age).
+  Structural comparison is the right one, as the plan said.
+- The gateway applies the rules: an `OPTIONS` preflight from an allowed
+  origin answers 200 with `Access-Control-Allow-Origin/-Methods/-Max-Age/
+  -Expose-Headers` from the matching rule; a foreign origin answers 403.
+  Asserted in `TestAccBucketCORSConfiguration`.
+- No rule-count limit was probed.
+- The interaction with the global `--cors-allow-origin` flag was **not**
+  measured; the test gateway runs without it.
+
 ## Tests
 
 1. two rules → read back both in order.
