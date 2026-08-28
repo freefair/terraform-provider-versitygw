@@ -3,6 +3,8 @@ package provider_test
 import (
 	"fmt"
 	"os"
+	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
@@ -140,4 +142,125 @@ resource "versitygw_bucket" "test" {
   depends_on = [versitygw_user.one, versitygw_user.two]
 }
 `, owner)
+}
+
+func TestAccBucketPolicyResource(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccBucketPolicyConfig("acc-policy-owner", []string{"s3:GetObject"}),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("versitygw_bucket_policy.test", "bucket", "acc-policy-bucket"),
+					resource.TestCheckResourceAttrWith("versitygw_bucket_policy.test", "policy", func(v string) error {
+						if !strings.Contains(v, "s3:GetObject") {
+							return fmt.Errorf("policy does not carry the action: %s", v)
+						}
+						return nil
+					}),
+				),
+			},
+			{
+				// A new statement is an in-place update: PUT replaces.
+				Config: testAccBucketPolicyConfig("acc-policy-owner", []string{"s3:GetObject", "s3:ListBucket"}),
+				Check: resource.TestCheckResourceAttrWith("versitygw_bucket_policy.test", "policy", func(v string) error {
+					if !strings.Contains(v, "s3:ListBucket") {
+						return fmt.Errorf("updated policy not read back: %s", v)
+					}
+					return nil
+				}),
+			},
+			{
+				ResourceName:                         "versitygw_bucket_policy.test",
+				ImportState:                          true,
+				ImportStateId:                        "acc-policy-bucket",
+				ImportStateVerify:                    true,
+				ImportStateVerifyIdentifierAttribute: "bucket",
+			},
+			{
+				// Changing the bucket owner deletes the policy on the gateway
+				// side. The provider must surface that as drift — the plan
+				// after this apply is not empty — rather than reapply it
+				// behind the user's back.
+				Config:             testAccBucketPolicyConfig("acc-policy-reader", []string{"s3:GetObject", "s3:ListBucket"}),
+				ExpectNonEmptyPlan: true,
+			},
+			{
+				// The next apply recreates the policy and converges.
+				Config: testAccBucketPolicyConfig("acc-policy-reader", []string{"s3:GetObject", "s3:ListBucket"}),
+				Check:  resource.TestCheckResourceAttr("versitygw_bucket_policy.test", "bucket", "acc-policy-bucket"),
+			},
+		},
+	})
+}
+
+func TestAccBucketPolicyRejectsMalformedDocument(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				// Resources naming another bucket — the gateway refuses that,
+				// and its message is what the user should see.
+				Config: testAccBucketPolicyFixture("acc-policy-owner") + `
+resource "versitygw_bucket_policy" "test" {
+  bucket = versitygw_bucket.test.name
+  policy = jsonencode({
+    Version   = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { AWS = [versitygw_user.reader.access_key] }
+      Action    = ["s3:GetObject"]
+      Resource  = ["arn:aws:s3:::some-other-bucket/*"]
+    }]
+  })
+}
+`,
+				ExpectError: regexp.MustCompile(`rejected the policy`),
+			},
+		},
+	})
+}
+
+func testAccBucketPolicyFixture(owner string) string {
+	return fmt.Sprintf(`
+resource "versitygw_user" "owner" {
+  access_key = "acc-policy-owner"
+  secret_key = "policyownersecret"
+}
+
+resource "versitygw_user" "reader" {
+  access_key = "acc-policy-reader"
+  secret_key = "policyreadersecret"
+}
+
+resource "versitygw_bucket" "test" {
+  name  = "acc-policy-bucket"
+  owner = %q
+
+  depends_on = [versitygw_user.owner, versitygw_user.reader]
+}
+`, owner)
+}
+
+func testAccBucketPolicyConfig(owner string, actions []string) string {
+	quoted := make([]string, len(actions))
+	for i, a := range actions {
+		quoted[i] = fmt.Sprintf("%q", a)
+	}
+	return testAccBucketPolicyFixture(owner) + fmt.Sprintf(`
+resource "versitygw_bucket_policy" "test" {
+  bucket = versitygw_bucket.test.name
+  policy = jsonencode({
+    Version   = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { AWS = [versitygw_user.reader.access_key] }
+      Action    = [%s]
+      Resource  = ["arn:aws:s3:::acc-policy-bucket", "arn:aws:s3:::acc-policy-bucket/*"]
+    }]
+  })
+}
+`, strings.Join(quoted, ", "))
 }
