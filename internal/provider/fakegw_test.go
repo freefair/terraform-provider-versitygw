@@ -500,8 +500,9 @@ func (g *fakeGateway) handle(w http.ResponseWriter, r *http.Request) {
 		}
 		switch r.Method {
 		case http.MethodPut:
-			// Validation as measured: unknown method → InvalidRequest, a
-			// rule without origin or no rule at all → MalformedXML.
+			// Validation as measured and as auth/bucket_cors.go upstream
+			// reads: unknown method → InvalidRequest, a rule without
+			// origin or method, or no rule at all → MalformedXML.
 			var doc struct {
 				Rules []struct {
 					AllowedMethod []string
@@ -513,7 +514,7 @@ func (g *fakeGateway) handle(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			for _, rule := range doc.Rules {
-				if len(rule.AllowedOrigin) == 0 {
+				if len(rule.AllowedOrigin) == 0 || len(rule.AllowedMethod) == 0 {
 					s3Error(w, 400, "MalformedXML")
 					return
 				}

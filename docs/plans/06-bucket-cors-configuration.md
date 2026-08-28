@@ -56,7 +56,9 @@ matters to S3 (first matching rule wins), so a list, not a set.
 - `PUT` validates: an unsupported method (`PATCH`) → `InvalidRequest` 400
   "Found unsupported HTTP method in CORS config"; a rule without
   `AllowedOrigin`, no rule at all, or unparsable XML → `MalformedXML` 400.
-  The schema refuses the same at plan time.
+  `auth/bucket_cors.go` also rejects a rule without `AllowedMethod` the
+  same way and parses `MaxAgeSeconds` into an `int32`. The schema refuses
+  all of it at plan time.
 - `GET` returns the rules in the order they were sent, with the elements
   inside a rule reordered (methods, headers, expose, origins, id, max-age).
   Structural comparison is the right one, as the plan said.
@@ -65,8 +67,10 @@ matters to S3 (first matching rule wins), so a list, not a set.
   -Expose-Headers` from the matching rule; a foreign origin answers 403.
   Asserted in `TestAccBucketCORSConfiguration`.
 - No rule-count limit was probed.
-- The interaction with the global `--cors-allow-origin` flag was **not**
-  measured; the test gateway runs without it.
+- The global `--cors-allow-origin` flag is a fallback, not an override:
+  `s3api/middlewares/apply-bucket-cors-preflight.go` answers from it only
+  when the bucket has no CORS configuration. Read from source, not
+  measured; the test gateway runs without the flag.
 
 ## Tests
 

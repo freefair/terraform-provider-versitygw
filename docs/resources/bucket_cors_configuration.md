@@ -62,6 +62,12 @@ and method match, with `Access-Control-Allow-Origin`, `-Methods`, `-Max-Age`
 and `-Expose-Headers` taken from that rule; a request no rule matches gets a
 `403`. The block list is kept in configuration order for that reason.
 
+## The gateway's `--cors-allow-origin` flag is a fallback
+
+A gateway started with that flag answers preflights for buckets that have
+no CORS configuration of their own. Once this resource exists, its rules
+decide and the flag is not consulted for the bucket.
+
 ## Destroy deletes the configuration
 
 `DELETE ?cors` is a real route; the bucket stays, and afterwards reports

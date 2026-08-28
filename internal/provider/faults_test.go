@@ -693,6 +693,25 @@ resource "versitygw_bucket_cors_configuration" "test" {
   }
 }
 `,
+		`Null List Value`: `
+resource "versitygw_bucket_cors_configuration" "test" {
+  bucket = versitygw_bucket.test.name
+  cors_rule {
+    allowed_methods = ["GET"]
+    allowed_origins = [null]
+  }
+}
+`,
+		`max_age_seconds value must be between 0 and`: `
+resource "versitygw_bucket_cors_configuration" "test" {
+  bucket = versitygw_bucket.test.name
+  cors_rule {
+    allowed_methods = ["GET"]
+    allowed_origins = ["*"]
+    max_age_seconds = 2147483648
+  }
+}
+`,
 		`list must contain at least 1 elements`: `
 resource "versitygw_bucket_cors_configuration" "test" {
   bucket = versitygw_bucket.test.name

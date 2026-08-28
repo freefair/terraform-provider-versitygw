@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"math"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
@@ -54,7 +55,7 @@ func (r *bucketCORSResource) Metadata(_ context.Context, req resource.MetadataRe
 func (r *bucketCORSResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	// An optional list that is set but empty would come back absent from
 	// the gateway and diff forever; require at least one element instead.
-	nonEmptyStrings := []validator.List{listvalidator.SizeAtLeast(1)}
+	nonEmptyStrings := []validator.List{listvalidator.SizeAtLeast(1), listvalidator.NoNullValues()}
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "CORS configuration of a bucket, shaped like " +
 			"`aws_s3_bucket_cors_configuration`.\n\n" +
@@ -93,6 +94,7 @@ func (r *bucketCORSResource) Schema(_ context.Context, _ resource.SchemaRequest,
 							MarkdownDescription: "`GET`, `HEAD`, `PUT`, `POST` or `DELETE`.",
 							Validators: []validator.List{
 								listvalidator.SizeAtLeast(1),
+								listvalidator.NoNullValues(),
 								listvalidator.ValueStringsAre(stringvalidator.OneOf(client.CORSMethods...)),
 							},
 						},
@@ -111,7 +113,8 @@ func (r *bucketCORSResource) Schema(_ context.Context, _ resource.SchemaRequest,
 						"max_age_seconds": schema.Int64Attribute{
 							Optional:            true,
 							MarkdownDescription: "How long the browser may cache the preflight answer.",
-							Validators:          []validator.Int64{int64validator.AtLeast(0)},
+							// The gateway parses this into an int32.
+							Validators: []validator.Int64{int64validator.Between(0, math.MaxInt32)},
 						},
 					},
 				},
