@@ -49,6 +49,35 @@ in the schema pretending to work. Start with `index_document` and
   resource's — same as AWS.
 - Owner change does not touch it (plan 00).
 
+## Measured (v1.7.0, implementation)
+
+- The website handler (`website/handler.go`) honours every AWS field:
+  `RedirectAllRequestsTo` first, then pre-fetch routing rules
+  (`KeyPrefixEquals` only), the object, post-error routing rules
+  (`HttpErrorCodeReturnedEquals`), `ErrorDocument`, and `IndexDocument`
+  for keys ending in `/`. All of them are in the schema.
+- `PUT ?website` validates (`s3response/website.go`): `RedirectAllRequestsTo`
+  excludes the other blocks and needs a host; otherwise `IndexDocument` is
+  required, its suffix non-empty and without `/`; `ErrorDocument.Key`
+  non-empty; at most 50 routing rules; a rule's `Redirect` non-empty with
+  at most one of the two key replacements; a `Condition`, if present,
+  non-empty with an error code in 400–417 or 500–505; redirect codes in
+  {301, 302, 303, 304, 305, 307, 308}; protocol `http`/`https`. Violations
+  answer `MalformedXML` or `InvalidArgument`. `ValidateConfig` mirrors all
+  of it.
+- Storing works without a website listener; the flag only affects serving.
+  The listener flag is `--website <addr>` (`VGW_WEBSITE_PORT`), not
+  `--website-port` as the plan text above says; `--website-domain` is
+  optional and selects virtual-host routing (`cmd/versitygw/main.go`).
+- `GET ?website` always carries an empty `<RoutingRules></RoutingRules>`;
+  the client reads that as no rules. `omitempty` does not suppress the
+  parent of a `RoutingRules>RoutingRule` path, so the client wraps the
+  list in a pointer.
+- `DELETE ?website` is real and idempotent; afterwards `GET` answers
+  `NoSuchWebsiteConfiguration`.
+- Serving through the website listener (test 4) was not exercised; the CI
+  gateway runs without one.
+
 ## Tests
 
 1. index + error document → read back.

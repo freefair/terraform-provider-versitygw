@@ -851,3 +851,71 @@ func TestBucketCORSRoundTrip(t *testing.T) {
 		t.Errorf("deleting absent cors: %v", err)
 	}
 }
+
+func TestBucketWebsiteRoundTrip(t *testing.T) {
+	var sent string
+	stored := `<WebsiteConfiguration><IndexDocument><Suffix>index.html</Suffix></IndexDocument><ErrorDocument><Key>error.html</Key></ErrorDocument><RoutingRules></RoutingRules></WebsiteConfiguration>`
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPut:
+			b, _ := io.ReadAll(r.Body)
+			sent = string(b)
+		case http.MethodGet:
+			_, _ = io.WriteString(w, stored)
+		case http.MethodDelete:
+			w.WriteHeader(http.StatusNoContent)
+		}
+	})
+	err := c.PutBucketWebsite(context.Background(), "b", WebsiteConfiguration{
+		IndexDocument: &IndexDocument{Suffix: "index.html"},
+		ErrorDocument: &ErrorDocument{Key: "error.html"},
+	})
+	if err != nil {
+		t.Fatalf("PutBucketWebsite: %v", err)
+	}
+	if sent != `<WebsiteConfiguration><IndexDocument><Suffix>index.html</Suffix></IndexDocument><ErrorDocument><Key>error.html</Key></ErrorDocument></WebsiteConfiguration>` {
+		t.Errorf("body = %s", sent)
+	}
+	err = c.PutBucketWebsite(context.Background(), "b", WebsiteConfiguration{
+		IndexDocument: &IndexDocument{Suffix: "index.html"},
+		RoutingRules: &RoutingRules{Rules: []RoutingRule{{
+			Condition: &RoutingRuleCondition{KeyPrefixEquals: "docs/"},
+			Redirect:  &Redirect{HostName: "example.com", HTTPRedirectCode: "301", Protocol: "https", ReplaceKeyPrefixWith: "documents/"},
+		}}},
+	})
+	if err != nil {
+		t.Fatalf("PutBucketWebsite: %v", err)
+	}
+	if want := `<RoutingRules><RoutingRule><Condition><KeyPrefixEquals>docs/</KeyPrefixEquals></Condition><Redirect><HostName>example.com</HostName><HttpRedirectCode>301</HttpRedirectCode><Protocol>https</Protocol><ReplaceKeyPrefixWith>documents/</ReplaceKeyPrefixWith></Redirect></RoutingRule></RoutingRules>`; !strings.Contains(sent, want) {
+		t.Errorf("body = %s", sent)
+	}
+
+	cfg, err := c.GetBucketWebsite(context.Background(), "b")
+	if err != nil || cfg == nil || cfg.IndexDocument == nil || cfg.IndexDocument.Suffix != "index.html" ||
+		cfg.ErrorDocument == nil || cfg.ErrorDocument.Key != "error.html" || cfg.RoutingRules != nil || cfg.RedirectAllRequestsTo != nil {
+		t.Errorf("Get = %+v, %v", cfg, err)
+	}
+	stored = `<WebsiteConfiguration><RedirectAllRequestsTo><HostName>example.com</HostName><Protocol>https</Protocol></RedirectAllRequestsTo><RoutingRules></RoutingRules></WebsiteConfiguration>`
+	cfg, err = c.GetBucketWebsite(context.Background(), "b")
+	if err != nil || cfg == nil || cfg.RedirectAllRequestsTo == nil || cfg.RedirectAllRequestsTo.HostName != "example.com" || cfg.IndexDocument != nil {
+		t.Errorf("Get redirect = %+v, %v", cfg, err)
+	}
+	stored = `<<garbage`
+	if _, err := c.GetBucketWebsite(context.Background(), "b"); err == nil {
+		t.Error("garbage accepted")
+	}
+	if err := c.DeleteBucketWebsite(context.Background(), "b"); err != nil {
+		t.Errorf("delete: %v", err)
+	}
+
+	c, _ = newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`<Error><Code>NoSuchWebsiteConfiguration</Code></Error>`))
+	})
+	if cfg, err := c.GetBucketWebsite(context.Background(), "b"); err != nil || cfg != nil {
+		t.Errorf("absent = %v, %v; want nil, nil", cfg, err)
+	}
+	if err := c.DeleteBucketWebsite(context.Background(), "b"); err != nil {
+		t.Errorf("deleting absent website: %v", err)
+	}
+}

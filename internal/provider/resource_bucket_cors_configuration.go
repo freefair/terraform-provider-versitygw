@@ -223,10 +223,10 @@ func (r *bucketCORSResource) put(ctx context.Context, plan bucketCORSModel, diag
 	for _, m := range plan.Rules {
 		rule := client.CORSRule{
 			ID:             m.ID.ValueString(),
-			AllowedHeaders: strings(m.AllowedHeaders),
-			AllowedMethods: strings(m.AllowedMethods),
-			AllowedOrigins: strings(m.AllowedOrigins),
-			ExposeHeaders:  strings(m.ExposeHeaders),
+			AllowedHeaders: stringSlice(m.AllowedHeaders),
+			AllowedMethods: stringSlice(m.AllowedMethods),
+			AllowedOrigins: stringSlice(m.AllowedOrigins),
+			ExposeHeaders:  stringSlice(m.ExposeHeaders),
 		}
 		if !m.MaxAgeSeconds.IsNull() {
 			v := m.MaxAgeSeconds.ValueInt64()
@@ -248,8 +248,8 @@ func (r *bucketCORSResource) put(ctx context.Context, plan bucketCORSModel, diag
 	return false
 }
 
-// strings unpacks a list of strings; null and unknown give nil.
-func strings(l types.List) []string {
+// stringSlice unpacks a list of strings; null and unknown give nil.
+func stringSlice(l types.List) []string {
 	if l.IsNull() || l.IsUnknown() {
 		return nil
 	}

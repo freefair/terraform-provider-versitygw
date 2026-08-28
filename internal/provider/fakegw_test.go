@@ -42,8 +42,10 @@ type fakeGateway struct {
 	// a stored empty set (the gateway distinguishes the two).
 	tags map[string]map[string]string
 	// raw CORS XML per bucket, as posix stores it; absent = NoSuchCORSConfiguration.
-	cors   map[string][]byte
-	faults map[string]fault // "METHOD /path[?sub]" -> answer
+	cors map[string][]byte
+	// raw website XML per bucket; absent = NoSuchWebsiteConfiguration.
+	website map[string][]byte
+	faults  map[string]fault // "METHOD /path[?sub]" -> answer
 }
 
 type fakeAccount struct {
@@ -71,6 +73,7 @@ func newFakeGateway(t *testing.T) *fakeGateway {
 		acls:       map[string][]fakeGrant{},
 		tags:       map[string]map[string]string{},
 		cors:       map[string][]byte{},
+		website:    map[string][]byte{},
 		faults:     map[string]fault{},
 	}
 	g.srv = httptest.NewServer(http.HandlerFunc(g.handle))
@@ -117,6 +120,14 @@ func (g *fakeGateway) forgetBucket(name string) {
 	delete(g.acls, name)
 	delete(g.tags, name)
 	delete(g.cors, name)
+	delete(g.website, name)
+}
+
+// forgetWebsite drops the website configuration, as a DELETE from the CLI would.
+func (g *fakeGateway) forgetWebsite(name string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	delete(g.website, name)
 }
 
 // forgetCORS drops the CORS configuration, as a DELETE from the CLI would.
@@ -162,7 +173,7 @@ func (g *fakeGateway) handle(w http.ResponseWriter, r *http.Request) {
 	defer g.mu.Unlock()
 
 	route := r.Method + " " + r.URL.Path
-	for _, sub := range []string{"policy", "versioning", "object-lock", "ownershipControls", "acl", "tagging", "cors"} {
+	for _, sub := range []string{"policy", "versioning", "object-lock", "ownershipControls", "acl", "tagging", "cors", "website"} {
 		if r.URL.Query().Has(sub) {
 			route += "?" + sub
 		}
@@ -542,6 +553,59 @@ func (g *fakeGateway) handle(w http.ResponseWriter, r *http.Request) {
 			s3Error(w, 405, "MethodNotAllowed")
 		}
 
+	case r.URL.Query().Has("website"):
+		name := strings.TrimPrefix(r.URL.Path, "/")
+		if _, ok := g.buckets[name]; !ok {
+			s3Error(w, 404, "NoSuchBucket")
+			return
+		}
+		switch r.Method {
+		case http.MethodPut:
+			// s3response.WebsiteConfiguration.Validate upstream, reduced
+			// to the checks a provider bug could trip.
+			var doc struct {
+				Index    *struct{ Suffix string }   `xml:"IndexDocument"`
+				Error    *struct{ Key string }      `xml:"ErrorDocument"`
+				Redirect *struct{ HostName string } `xml:"RedirectAllRequestsTo"`
+				Rules    []struct{}                 `xml:"RoutingRules>RoutingRule"`
+			}
+			if err := xml.Unmarshal(body, &doc); err != nil {
+				s3Error(w, 400, "MalformedXML")
+				return
+			}
+			switch {
+			case doc.Redirect != nil && (doc.Index != nil || doc.Error != nil || len(doc.Rules) > 0),
+				doc.Redirect != nil && doc.Redirect.HostName == "",
+				doc.Redirect == nil && doc.Index == nil:
+				s3Error(w, 400, "MalformedXML")
+				return
+			case doc.Index != nil && (doc.Index.Suffix == "" || strings.Contains(doc.Index.Suffix, "/")),
+				doc.Error != nil && doc.Error.Key == "":
+				s3Error(w, 400, "InvalidArgument")
+				return
+			}
+			g.website[name] = body
+			w.WriteHeader(200)
+		case http.MethodGet:
+			doc, ok := g.website[name]
+			if !ok {
+				s3Error(w, 404, "NoSuchWebsiteConfiguration")
+				return
+			}
+			// The gateway always emits the RoutingRules element.
+			out := string(doc)
+			if !strings.Contains(out, "<RoutingRules>") {
+				out = strings.Replace(out, "</WebsiteConfiguration>", "<RoutingRules></RoutingRules></WebsiteConfiguration>", 1)
+			}
+			_, _ = io.WriteString(w, out)
+		case http.MethodDelete:
+			delete(g.website, name)
+			w.WriteHeader(204)
+		default:
+			g.t.Errorf("fake gateway: %s on ?website", r.Method)
+			s3Error(w, 405, "MethodNotAllowed")
+		}
+
 	case r.Method == http.MethodDelete:
 		// The real gateway routes a DELETE with a sub-resource it does not
 		// know (?versioning, ?object-lock) here as well — and deletes the
@@ -561,6 +625,7 @@ func (g *fakeGateway) handle(w http.ResponseWriter, r *http.Request) {
 		delete(g.acls, name)
 		delete(g.tags, name)
 		delete(g.cors, name)
+		delete(g.website, name)
 		w.WriteHeader(204)
 
 	default:

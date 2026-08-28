@@ -3,6 +3,7 @@ package provider_test
 import (
 	"fmt"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
@@ -751,6 +752,194 @@ func TestFaultCORS(t *testing.T) {
 		// Deleted behind Terraform's back → not-found → gone from state.
 		resource.TestStep{PreConfig: func() { g.clearFaults(); g.forgetCORS("fault-bucket") },
 			Config: faultCORS, PlanOnly: true, ExpectNonEmptyPlan: true},
+		recover(g),
+	)
+}
+
+const faultWebsite = faultBucket + `
+resource "versitygw_bucket_website_configuration" "test" {
+  bucket = versitygw_bucket.test.name
+  index_document {
+    suffix = "index.html"
+  }
+}
+`
+
+const faultWebsiteChanged = faultBucket + `
+resource "versitygw_bucket_website_configuration" "test" {
+  bucket = versitygw_bucket.test.name
+  redirect_all_requests_to {
+    host_name = "example.com"
+  }
+}
+`
+
+func TestFaultWebsiteConfigValidation(t *testing.T) {
+	newFakeGateway(t)
+	rule := func(body string) string {
+		return `
+resource "versitygw_bucket_website_configuration" "test" {
+  bucket = versitygw_bucket.test.name
+  index_document {
+    suffix = "index.html"
+  }
+  routing_rule {
+` + body + `
+  }
+}
+`
+	}
+	cases := map[string]string{
+		`Missing block`: `
+resource "versitygw_bucket_website_configuration" "test" {
+  bucket = versitygw_bucket.test.name
+}
+`,
+		`Missing suffix`: `
+resource "versitygw_bucket_website_configuration" "test" {
+  bucket = versitygw_bucket.test.name
+  index_document {}
+}
+`,
+		`Missing key`: `
+resource "versitygw_bucket_website_configuration" "test" {
+  bucket = versitygw_bucket.test.name
+  index_document {
+    suffix = "index.html"
+  }
+  error_document {}
+}
+`,
+		`Missing host_name`: `
+resource "versitygw_bucket_website_configuration" "test" {
+  bucket = versitygw_bucket.test.name
+  redirect_all_requests_to {}
+}
+`,
+		`redirect_all_requests_to and index_document are mutually exclusive`: `
+resource "versitygw_bucket_website_configuration" "test" {
+  bucket = versitygw_bucket.test.name
+  index_document {
+    suffix = "index.html"
+  }
+  redirect_all_requests_to {
+    host_name = "example.com"
+  }
+}
+`,
+		`cannot be combined with error_document`: `
+resource "versitygw_bucket_website_configuration" "test" {
+  bucket = versitygw_bucket.test.name
+  redirect_all_requests_to {
+    host_name = "example.com"
+  }
+  error_document {
+    key = "404.html"
+  }
+}
+`,
+		`must not contain a slash`: `
+resource "versitygw_bucket_website_configuration" "test" {
+  bucket = versitygw_bucket.test.name
+  index_document {
+    suffix = "sub/index.html"
+  }
+}
+`,
+		`protocol value must be one of: \["http"`: `
+resource "versitygw_bucket_website_configuration" "test" {
+  bucket = versitygw_bucket.test.name
+  redirect_all_requests_to {
+    host_name = "example.com"
+    protocol  = "ftp"
+  }
+}
+`,
+		`Missing redirect`: rule(`
+    condition {
+      key_prefix_equals = "a/"
+    }
+`),
+		`Empty redirect`: rule(`
+    redirect {}
+`),
+		`Conflicting replacements`: rule(`
+    redirect {
+      replace_key_with        = "a"
+      replace_key_prefix_with = "b"
+    }
+`),
+		`Empty condition`: rule(`
+    condition {}
+    redirect {
+      host_name = "example.com"
+    }
+`),
+		`Invalid error code`: rule(`
+    condition {
+      http_error_code_returned_equals = "418"
+    }
+    redirect {
+      host_name = "example.com"
+    }
+`),
+		`http_redirect_code value must be one of`: rule(`
+    redirect {
+      http_redirect_code = "300"
+    }
+`),
+	}
+	for pattern, cfg := range cases {
+		faultCase(t, expectError(faultBucket+cfg, pattern))
+	}
+
+	var many strings.Builder
+	for i := 0; i < 51; i++ { // one over the gateway's limit of 50
+		fmt.Fprintf(&many, `
+  routing_rule {
+    condition {
+      key_prefix_equals = "p%d/"
+    }
+    redirect {
+      host_name = "example.com"
+    }
+  }
+`, i)
+	}
+	faultCase(t, expectError(faultBucket+`
+resource "versitygw_bucket_website_configuration" "test" {
+  bucket = versitygw_bucket.test.name
+  index_document {
+    suffix = "index.html"
+  }
+`+many.String()+`
+}
+`, `Too many routing rules`))
+}
+
+func TestFaultWebsite(t *testing.T) {
+	g := newFakeGateway(t)
+	g.fail("PUT /fault-bucket?website", 404, "NoSuchBucket")
+	faultCase(t, expectError(faultWebsite, `Bucket does not exist`), recover(g))
+
+	g = newFakeGateway(t)
+	g.fail("PUT /fault-bucket?website", 500, "InternalError")
+	faultCase(t, expectError(faultWebsite, `Cannot set the website configuration`), recover(g))
+
+	g = newFakeGateway(t)
+	faultCase(t,
+		resource.TestStep{Config: faultWebsite},
+		resource.TestStep{PreConfig: func() { g.fail("GET /fault-bucket?website", 500, "InternalError") },
+			Config: faultWebsite, ExpectError: regexp.MustCompile(`Cannot read the website configuration`)},
+		resource.TestStep{PreConfig: func() { g.clearFaults(); g.fail("PUT /fault-bucket?website", 500, "InternalError") },
+			Config: faultWebsiteChanged, ExpectError: regexp.MustCompile(`Cannot set the website configuration`)},
+		resource.TestStep{PreConfig: g.clearFaults, Config: faultWebsiteChanged,
+			Check: resource.TestCheckResourceAttr("versitygw_bucket_website_configuration.test", "redirect_all_requests_to.host_name", "example.com")},
+		resource.TestStep{PreConfig: func() { g.fail("DELETE /fault-bucket?website", 500, "InternalError") },
+			Config: faultBucket, ExpectError: regexp.MustCompile(`Cannot delete the website configuration`)},
+		// Deleted behind Terraform's back → not-found → gone from state.
+		resource.TestStep{PreConfig: func() { g.clearFaults(); g.forgetWebsite("fault-bucket") },
+			Config: faultWebsite, PlanOnly: true, ExpectNonEmptyPlan: true},
 		recover(g),
 	)
 }
