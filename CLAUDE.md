@@ -13,6 +13,7 @@ manages IAM accounts and buckets through the gateway's admin API.
 - `internal/provider/resource_bucket.go` — `versitygw_bucket`
 - `internal/provider/data_source_*.go` — `versitygw_users`, `versitygw_buckets`
 - `internal/client/` — SigV4-signed HTTP client for the admin and S3 APIs
+- `docs/plans/` — one plan per missing bucket-level resource; `README.md` there is the roadmap
 - Uses `terraform-plugin-framework` (not SDKv2)
 
 ## Upstream facts the code depends on
@@ -34,8 +35,13 @@ code without re-checking them breaks things silently.
   This is what makes drift detection on `secret_key` possible.
 - **There is no admin route to delete a bucket.** Deletion goes to the S3 API,
   which refuses a non-empty bucket.
-- **`change-bucket-owner` discards the bucket's ACL and policy.** Documented in
-  the resource, not worked around.
+- **`change-bucket-owner` discards the bucket's ACL and policy — and nothing
+  else.** `auth.UpdateBucketACLOwner` does a `PutBucketAcl` and a
+  `DeleteBucketPolicy`; tags, CORS, website, versioning and object lock stay.
+  Documented in the resource, not worked around.
+- **Lifecycle, encryption, replication, logging, notification and public
+  access block are `ErrNotImplemented` in `s3api/router.go`** and absent from
+  `backend.Backend`. Do not plan resources for them; re-check on a version bump.
 
 ## Key Design Decisions
 
@@ -64,6 +70,12 @@ TF_ACC=1 go test -v -timeout 120m ./...    # acceptance tests, real gateway
 
 Acceptance tests need a running gateway; see the comment at the top of
 `internal/provider/provider_test.go` for the container invocation.
+
+CI: `test.yml` pins `versity/versitygw:v1.7.0` — the version the facts above
+are measured against. `compat.yml` runs weekly against `:latest` with Terraform
+latest and OpenTofu latest. A red compat run means: bump the pin in a deliberate
+commit and re-check every fact above. Dependabot covers Go modules and Actions;
+it cannot see the image pin.
 
 ## Release
 

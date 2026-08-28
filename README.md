@@ -1,6 +1,7 @@
 # Terraform Provider: VersityGW
 
 [![Tests](https://github.com/freefair/terraform-provider-versitygw/actions/workflows/test.yml/badge.svg)](https://github.com/freefair/terraform-provider-versitygw/actions/workflows/test.yml)
+[![Compatibility](https://github.com/freefair/terraform-provider-versitygw/actions/workflows/compat.yml/badge.svg)](https://github.com/freefair/terraform-provider-versitygw/actions/workflows/compat.yml)
 [![Registry](https://img.shields.io/badge/terraform-registry-blueviolet)](https://registry.terraform.io/providers/freefair/versitygw/latest)
 
 Manages accounts and buckets on a [Versity S3 Gateway](https://github.com/versity/versitygw),
@@ -72,6 +73,15 @@ resource "versitygw_bucket" "artifacts" {
 Full argument reference on the
 [Terraform Registry](https://registry.terraform.io/providers/freefair/versitygw/latest/docs).
 
+### Roadmap
+
+The admin API is covered completely. What the gateway offers per bucket over
+the S3 API — policy, ACL, versioning, object lock, tags, CORS, website,
+ownership controls — is not yet, and is planned as one resource each, shaped
+like the corresponding `aws_s3_bucket_*` resource. See
+[`docs/plans/`](docs/plans/README.md) for the plans and for what is
+deliberately left out.
+
 ## Key behaviours
 
 Four things about VersityGW that shape how this provider works, and that are
@@ -125,6 +135,18 @@ export VERSITYGW_ACCESS_KEY=testaccess
 export VERSITYGW_SECRET_KEY=testsecret
 make testacc
 ```
+
+### Continuous Integration
+
+Pull requests run the acceptance tests against a **pinned** gateway version
+(`versity/versitygw:v1.7.0` in `.github/workflows/test.yml`) — the release the
+upstream facts in `CLAUDE.md` were measured against — so a PR cannot go red
+because upstream moved. Drift is caught by
+[`compat.yml`](.github/workflows/compat.yml), which runs every Monday against
+`versity/versitygw:latest` with the newest Terraform and the newest OpenTofu
+and writes the versions in play to the job summary. When it goes red, bump the
+pin deliberately and re-check the facts. Dependabot keeps Go modules and
+Actions current (`.github/dependabot.yml`).
 
 ### Additional Targets
 
