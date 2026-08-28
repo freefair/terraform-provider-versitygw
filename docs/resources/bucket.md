@@ -54,8 +54,9 @@ default for the new owner. A `versitygw_bucket_policy` on the bucket shows up
 as missing on the next plan and is recreated; anything set outside Terraform
 has to be reapplied by hand.
 
-Because `name` forces replacement, an in-place update of this resource can only
-ever be an ownership change — so every update carries that consequence.
+Because `name` forces replacement, an in-place update of this resource is an
+ownership change, a tag change, or both — and only the ownership change
+carries that consequence.
 
 ## Destroying a bucket requires it to be empty
 
@@ -77,3 +78,7 @@ no longer exists.
 ```shell
 terraform import versitygw_bucket.artifacts build-artifacts
 ```
+
+Import reads the bucket's tags into state. A configuration without `tags`
+plans their removal on the first apply — add them to the configuration to
+keep them, as with `aws_s3_bucket`.

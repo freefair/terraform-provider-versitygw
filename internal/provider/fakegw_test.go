@@ -490,7 +490,14 @@ func (g *fakeGateway) handle(w http.ResponseWriter, r *http.Request) {
 			s3Error(w, 404, "NoSuchBucket")
 			return
 		}
-		delete(g.buckets, name)
+		// Sub-resources die with the bucket; a re-created bucket starts clean.
+		for _, m := range []map[string]string{g.buckets, g.versioning, g.ownership} {
+			delete(m, name)
+		}
+		delete(g.policies, name)
+		delete(g.locks, name)
+		delete(g.acls, name)
+		delete(g.tags, name)
 		w.WriteHeader(204)
 
 	default:

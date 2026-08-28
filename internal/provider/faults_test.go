@@ -597,4 +597,57 @@ func TestFaultBucketTags(t *testing.T) {
 			Check: resource.TestCheckResourceAttr("versitygw_bucket.test", "tags.%", "0")},
 		recover(g),
 	)
+
+	// Owner and tags change in one apply, the tag write fails: the owner
+	// change already happened and stays in state, so the next apply only
+	// retries the tags.
+	g = newFakeGateway(t)
+	ownerAndTags := func(owner, tags string) string {
+		return faultUser + `
+resource "versitygw_user" "other" {
+  access_key = "fault-other"
+  secret_key = "faultsecret"
+}
+
+resource "versitygw_bucket" "test" {
+  name  = "fault-bucket"
+  owner = ` + owner + `
+  tags  = ` + tags + `
+}
+`
+	}
+	faultCase(t,
+		resource.TestStep{Config: ownerAndTags("versitygw_user.test.access_key", `{ k = "v" }`)},
+		resource.TestStep{
+			PreConfig:   func() { g.fail("PUT /fault-bucket?tagging", 500, "InternalError") },
+			Config:      ownerAndTags("versitygw_user.other.access_key", `{ k = "w" }`),
+			ExpectError: regexp.MustCompile(`Cannot set the bucket tags`),
+		},
+		resource.TestStep{
+			PreConfig: g.clearFaults,
+			Config:    ownerAndTags("versitygw_user.other.access_key", `{ k = "w" }`),
+			Check: resource.ComposeAggregateTestCheckFunc(
+				resource.TestCheckResourceAttr("versitygw_bucket.test", "owner", "fault-other"),
+				resource.TestCheckResourceAttr("versitygw_bucket.test", "tags.k", "w"),
+			),
+		},
+		recover(g),
+	)
+	if g.buckets["fault-bucket"] != "" {
+		t.Errorf("bucket left behind")
+	}
+}
+
+func TestFaultBucketTagsConfigValidation(t *testing.T) {
+	g := newFakeGateway(t)
+	faultCase(t,
+		expectError(faultUser+`
+resource "versitygw_bucket" "test" {
+  name  = "fault-bucket"
+  owner = versitygw_user.test.access_key
+  tags  = { k = null }
+}
+`, `Null tag value`),
+		recover(g),
+	)
 }

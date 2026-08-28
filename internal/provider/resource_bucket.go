@@ -19,9 +19,10 @@ import (
 )
 
 var (
-	_ resource.Resource                = &bucketResource{}
-	_ resource.ResourceWithConfigure   = &bucketResource{}
-	_ resource.ResourceWithImportState = &bucketResource{}
+	_ resource.Resource                   = &bucketResource{}
+	_ resource.ResourceWithConfigure      = &bucketResource{}
+	_ resource.ResourceWithImportState    = &bucketResource{}
+	_ resource.ResourceWithValidateConfig = &bucketResource{}
 )
 
 type bucketResource struct {
@@ -79,6 +80,22 @@ func (r *bucketResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 					"deletes the tag set.",
 			},
 		},
+	}
+}
+
+// ValidateConfig refuses null tag values. The gateway has no such thing;
+// storing "" for them would read back as "" and diff against null forever.
+func (r *bucketResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+	var cfg bucketModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &cfg)...)
+	if resp.Diagnostics.HasError() || cfg.Tags.IsNull() || cfg.Tags.IsUnknown() {
+		return
+	}
+	for k, v := range cfg.Tags.Elements() {
+		if v.IsNull() {
+			resp.Diagnostics.AddAttributeError(path.Root("tags").AtMapKey(k), "Null tag value",
+				fmt.Sprintf("Tag %q has a null value. Use \"\" for an empty value, or drop the key.", k))
+		}
 	}
 }
 
