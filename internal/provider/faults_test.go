@@ -311,11 +311,12 @@ resource "versitygw_bucket_object_lock_configuration" "test" {
 }
 `
 	}
+	// HCL allows no nested single-line blocks, hence the layout.
 	cases := map[string]string{
-		`rule {}`: `Empty rule`,
-		`rule { default_retention { days = 1 } }`:                                     `Missing retention mode`,
-		`rule { default_retention { mode = "GOVERNANCE" } }`:                          `exactly one of days and years`,
-		"rule { default_retention { mode = \"GOVERNANCE\"\n days = 1\n years = 1 } }": `exactly one of days and years`,
+		"rule {}": `Empty rule`,
+		"rule {\n default_retention {\n days = 1\n }\n}":                                     `Missing retention mode`,
+		"rule {\n default_retention {\n mode = \"GOVERNANCE\"\n }\n}":                        `exactly one of days and years`,
+		"rule {\n default_retention {\n mode = \"GOVERNANCE\"\n days = 1\n years = 1\n }\n}": `exactly one of days and years`,
 	}
 	for body, pattern := range cases {
 		newFakeGateway(t)
