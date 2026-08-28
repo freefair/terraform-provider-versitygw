@@ -33,6 +33,19 @@ resource "versitygw_bucket" "artifacts" {
   alphanumerically. Immutable — changing it forces replacement.
 - `owner` (String) Access key ID of the owning account.
 
+### Optional
+
+- `tags` (Map of String) Tags on the bucket, as on `aws_s3_bucket`. Defaults
+  to an empty map, so `tags = {}` and no `tags` at all mean the same thing:
+  no tag set on the gateway. Removing every tag deletes the tag set.
+
+## Tags survive an owner change
+
+Unlike the ACL and the policy, the tag set is not touched by
+`change-bucket-owner`. Changing `owner` and `tags` in one apply performs the
+ownership change first; if the tag write then fails, the new owner is kept in
+state and the next apply retries only the tags.
+
 ## Changing the owner discards the ACL and the policy
 
 ~> This is upstream behaviour, not a provider limitation. When ownership moves,
@@ -41,8 +54,9 @@ default for the new owner. A `versitygw_bucket_policy` on the bucket shows up
 as missing on the next plan and is recreated; anything set outside Terraform
 has to be reapplied by hand.
 
-Because `name` forces replacement, an in-place update of this resource can only
-ever be an ownership change — so every update carries that consequence.
+Because `name` forces replacement, an in-place update of this resource is an
+ownership change, a tag change, or both — and only the ownership change
+carries that consequence.
 
 ## Destroying a bucket requires it to be empty
 
@@ -64,3 +78,7 @@ no longer exists.
 ```shell
 terraform import versitygw_bucket.artifacts build-artifacts
 ```
+
+Import reads the bucket's tags into state. A configuration without `tags`
+plans their removal on the first apply — add them to the configuration to
+keep them, as with `aws_s3_bucket`.

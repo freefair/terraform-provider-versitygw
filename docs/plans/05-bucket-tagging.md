@@ -49,6 +49,20 @@ existence check; only call `?tagging` when the bucket exists.
 - Empty map vs null: treat both as "delete the tag set" to avoid a perpetual
   diff between `{}` and absent.
 
+## Measured (v1.7.0, implementation)
+
+- `DELETE ?tagging` is a real route: the bucket survives, a following `GET`
+  answers `NoSuchTagSet`. Deleting an absent tag set also answers 204.
+- `PUT ?tagging` with an empty `<TagSet/>` is stored as an empty set — `GET`
+  answers 200 with no tags rather than `NoSuchTagSet`. The provider reads
+  both as an empty map, so the distinction never reaches state.
+- Tags come back sorted by key; the provider's map type does not care.
+- Owner change keeps the tags (asserted in `TestAccBucketTags`).
+- No tag count or length limits were hit with normal values; the gateway's
+  validation of the S3 limits (50 tags, 128/256 characters) was not measured.
+- Chosen: `tags` is `Optional + Computed` with an empty-map default. Null and
+  `{}` in config are thus the same state and neither produces a diff.
+
 ## Tests
 
 Extend `TestAccBucketResource`:

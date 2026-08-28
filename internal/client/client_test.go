@@ -747,3 +747,52 @@ func TestBucketACLRoundTrip(t *testing.T) {
 		t.Error("garbage accepted as ACL")
 	}
 }
+
+func TestBucketTaggingRoundTrip(t *testing.T) {
+	var sent, method string
+	stored := `<Tagging><TagSet><Tag><Key>team</Key><Value>platform</Value></Tag><Tag><Key>empty</Key><Value></Value></Tag></TagSet></Tagging>`
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		method = r.Method
+		switch r.Method {
+		case http.MethodPut:
+			b, _ := io.ReadAll(r.Body)
+			sent = string(b)
+		case http.MethodGet:
+			_, _ = io.WriteString(w, stored)
+		case http.MethodDelete:
+			w.WriteHeader(http.StatusNoContent)
+		}
+	})
+	if err := c.PutBucketTagging(context.Background(), "b", map[string]string{"k": "v"}); err != nil {
+		t.Fatalf("PutBucketTagging: %v", err)
+	}
+	if sent != `<Tagging><TagSet><Tag><Key>k</Key><Value>v</Value></Tag></TagSet></Tagging>` {
+		t.Errorf("body = %s", sent)
+	}
+	got, err := c.GetBucketTagging(context.Background(), "b")
+	if err != nil || len(got) != 2 || got["team"] != "platform" || got["empty"] != "" {
+		t.Errorf("Get = %v, %v", got, err)
+	}
+	stored = `<Tagging><TagSet></TagSet></Tagging>`
+	if got, err := c.GetBucketTagging(context.Background(), "b"); err != nil || len(got) != 0 {
+		t.Errorf("empty set = %v, %v", got, err)
+	}
+	stored = `<<garbage`
+	if _, err := c.GetBucketTagging(context.Background(), "b"); err == nil {
+		t.Error("garbage accepted")
+	}
+	if err := c.DeleteBucketTagging(context.Background(), "b"); err != nil || method != http.MethodDelete {
+		t.Errorf("delete: %v (%s)", err, method)
+	}
+
+	c, _ = newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`<Error><Code>NoSuchTagSet</Code></Error>`))
+	})
+	if got, err := c.GetBucketTagging(context.Background(), "b"); err != nil || len(got) != 0 {
+		t.Errorf("no tag set = %v, %v; want empty map", got, err)
+	}
+	if err := c.DeleteBucketTagging(context.Background(), "b"); err != nil {
+		t.Errorf("deleting absent tags: %v", err)
+	}
+}

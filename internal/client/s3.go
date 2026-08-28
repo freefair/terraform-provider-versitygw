@@ -340,3 +340,53 @@ func (c *Client) GetBucketACL(ctx context.Context, bucket string) (*BucketACL, e
 	}
 	return acl, nil
 }
+
+// Bucket tags. Tagging has a real DELETE (measured: the bucket survives).
+
+type tagging struct {
+	XMLName xml.Name `xml:"Tagging"`
+	Tags    []struct {
+		Key   string `xml:"Key"`
+		Value string `xml:"Value"`
+	} `xml:"TagSet>Tag"`
+}
+
+// PutBucketTagging replaces the tag set.
+func (c *Client) PutBucketTagging(ctx context.Context, bucket string, tags map[string]string) error {
+	var doc tagging
+	for k, v := range tags {
+		doc.Tags = append(doc.Tags, struct {
+			Key   string `xml:"Key"`
+			Value string `xml:"Value"`
+		}{k, v})
+	}
+	body, err := xml.Marshal(doc)
+	if err != nil {
+		return fmt.Errorf("marshal tagging: %w", err)
+	}
+	return c.putBucketSubresource(ctx, bucket, "tagging", nil, body)
+}
+
+// GetBucketTagging returns the tags. No tag set (NoSuchTagSet), an empty
+// one, and a missing bucket all read as an empty map — the provider treats
+// "no tags" as one state, not three.
+func (c *Client) GetBucketTagging(ctx context.Context, bucket string) (map[string]string, error) {
+	payload, err := c.getBucketSubresource(ctx, bucket, "tagging", "NoSuchTagSet")
+	if err != nil || payload == nil {
+		return map[string]string{}, err
+	}
+	var doc tagging
+	if err := xml.Unmarshal(payload, &doc); err != nil {
+		return nil, fmt.Errorf("parse tagging: %w", err)
+	}
+	tags := make(map[string]string, len(doc.Tags))
+	for _, t := range doc.Tags {
+		tags[t.Key] = t.Value
+	}
+	return tags, nil
+}
+
+// DeleteBucketTagging removes the tag set.
+func (c *Client) DeleteBucketTagging(ctx context.Context, bucket string) error {
+	return c.deleteBucketSubresource(ctx, bucket, "tagging", "NoSuchTagSet")
+}
