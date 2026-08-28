@@ -4,7 +4,7 @@ resource "versitygw_bucket" "site" {
 }
 
 # Served only when the gateway runs a website listener
-# (--website-port / VGW_WEBSITE_PORT plus --website-domain).
+# (--website <addr> / VGW_WEBSITE_PORT; --website-domain for virtual hosts).
 resource "versitygw_bucket_website_configuration" "site" {
   bucket = versitygw_bucket.site.name
 

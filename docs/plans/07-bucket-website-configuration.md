@@ -66,6 +66,9 @@ in the schema pretending to work. Start with `index_document` and
   answer `MalformedXML` or `InvalidArgument`. `ValidateConfig` mirrors all
   of it.
 - Storing works without a website listener; the flag only affects serving.
+  The listener flag is `--website <addr>` (`VGW_WEBSITE_PORT`), not
+  `--website-port` as the plan text above says; `--website-domain` is
+  optional and selects virtual-host routing (`cmd/versitygw/main.go`).
 - `GET ?website` always carries an empty `<RoutingRules></RoutingRules>`;
   the client reads that as no rules. `omitempty` does not suppress the
   parent of a `RoutingRules>RoutingRule` path, so the client wraps the

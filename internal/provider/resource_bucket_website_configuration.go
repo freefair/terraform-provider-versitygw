@@ -84,8 +84,9 @@ func (r *bucketWebsiteResource) Schema(_ context.Context, _ resource.SchemaReque
 		MarkdownDescription: "Static website configuration of a bucket, shaped like " +
 			"`aws_s3_bucket_website_configuration`.\n\n" +
 			"The gateway stores and validates it on any deployment, but only **serves** " +
-			"the site when started with a website listener (`--website-port` / " +
-			"`VGW_WEBSITE_PORT` and `--website-domain`). Exactly one of `index_document` " +
+			"the site when started with a website listener (`--website <addr>` / " +
+			"`VGW_WEBSITE_PORT`; `--website-domain` picks virtual-host routing, without " +
+			"it the full hostname is the bucket name). Exactly one of `index_document` " +
 			"and `redirect_all_requests_to` is required; `error_document` and " +
 			"`routing_rule` go with `index_document` only. Destroying this resource " +
 			"deletes the configuration.",

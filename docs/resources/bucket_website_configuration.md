@@ -10,8 +10,10 @@ Static website configuration of a bucket, shaped like
 `aws_s3_bucket_website_configuration`.
 
 ~> The gateway stores and validates the configuration on any deployment, but
-only **serves** the site when started with a website listener
-(`--website-port` / `VGW_WEBSITE_PORT` and `--website-domain`). This resource
+only **serves** the site when started with a website listener (`--website
+<addr>` / `VGW_WEBSITE_PORT`). With `--website-domain example.com` the host
+`blog.example.com` serves bucket `blog`; without it the full hostname is the
+bucket name. This resource
 cannot tell whether that listener exists; a configuration on a gateway without
 one succeeds and does nothing. Public access to the objects is an ACL or
 policy matter, as on AWS.
