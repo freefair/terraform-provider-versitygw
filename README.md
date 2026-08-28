@@ -1,0 +1,170 @@
+# Terraform Provider: VersityGW
+
+[![Tests](https://github.com/freefair/terraform-provider-versitygw/actions/workflows/test.yml/badge.svg)](https://github.com/freefair/terraform-provider-versitygw/actions/workflows/test.yml)
+[![Registry](https://img.shields.io/badge/terraform-registry-blueviolet)](https://registry.terraform.io/providers/freefair/versitygw/latest)
+
+Manages accounts and buckets on a [Versity S3 Gateway](https://github.com/versity/versitygw),
+an Apache-2.0 S3 server that puts an S3 API over a POSIX filesystem, ScoutFS,
+Azure Blob Storage or another S3 server.
+
+VersityGW keeps account management behind an admin API of its own, so the AWS
+provider cannot reach it — `aws_iam_user` has nothing to talk to. This provider
+speaks that API directly, which makes accounts and bucket ownership real
+Terraform resources with drift detection, rather than a `local-exec` calling the
+`versitygw admin` CLI.
+
+## Requirements
+
+- [Terraform](https://developer.hashicorp.com/terraform/downloads) >= 1.0, or
+  [OpenTofu](https://opentofu.org/docs/intro/install/) >= 1.6
+- [Go](https://go.dev/dl/) >= 1.26 (to build the provider)
+- A VersityGW instance and the credentials of an `admin` or `root` account
+
+## Installation
+
+```hcl
+terraform {
+  required_providers {
+    versitygw = {
+      source  = "freefair/versitygw"
+      version = "~> 0.1"
+    }
+  }
+}
+```
+
+## Usage
+
+```hcl
+# Endpoint and credentials come from VERSITYGW_ENDPOINT, VERSITYGW_ACCESS_KEY
+# and VERSITYGW_SECRET_KEY, so nothing secret has to live in the configuration.
+provider "versitygw" {}
+
+resource "random_password" "ci" {
+  length  = 40
+  special = false
+}
+
+resource "versitygw_user" "ci" {
+  access_key = "build-pipeline"
+  secret_key = random_password.ci.result
+  role       = "user"
+}
+
+resource "versitygw_bucket" "artifacts" {
+  name  = "build-artifacts"
+  owner = versitygw_user.ci.access_key
+}
+```
+
+## Resources
+
+| Resource | Description |
+|---|---|
+| [`versitygw_user`](docs/resources/user.md) | An account in the gateway's IAM service |
+| [`versitygw_bucket`](docs/resources/bucket.md) | A bucket and the account that owns it |
+
+| Data source | Description |
+|---|---|
+| [`versitygw_users`](docs/data-sources/users.md) | Every account on the gateway |
+| [`versitygw_buckets`](docs/data-sources/buckets.md) | Every bucket with its owner |
+
+Full argument reference on the
+[Terraform Registry](https://registry.terraform.io/providers/freefair/versitygw/latest/docs).
+
+## Key behaviours
+
+Four things about VersityGW that shape how this provider works, and that are
+easier to know up front than to discover from an error message.
+
+**The admin API may or may not be on the S3 endpoint.** A gateway started
+without `--admin-port` mounts the admin routes on the S3 listener; a gateway
+started with one serves them nowhere else. So `admin_endpoint` falls back to
+`endpoint`, and has to be set explicitly in the second case — otherwise every
+account operation answers `404`.
+
+**An account is its access key ID.** There is no rename and no separate key
+rotation, so changing `access_key` replaces the account. `secret_key` on its own
+is an in-place update.
+
+**Changing a bucket's owner discards its ACL and policy.** The gateway applies a
+fresh default for the new owner rather than migrating the old one. Since `name`
+forces replacement, every in-place update of a bucket carries this.
+
+**`list-users` returns secret keys.** That is what lets this provider detect a
+key changed outside Terraform — and it is also why the credentials it uses are
+the most privileged ones on the gateway, and why the admin endpoint belongs on a
+network that only administrators reach.
+
+## Developing the Provider
+
+### Building
+
+```bash
+make build
+```
+
+### Testing
+
+```bash
+make test     # unit tests; no gateway needed
+make testacc  # acceptance tests against a real gateway
+```
+
+Acceptance tests run against a real instance on purpose — a mock would only
+prove the provider agrees with itself, and the wire format belongs to upstream:
+
+```bash
+docker run --rm -d -p 7070:7070 --name versitygw-acc \
+  -e ROOT_ACCESS_KEY_ID=testaccess -e ROOT_SECRET_ACCESS_KEY=testsecret \
+  versity/versitygw:latest posix /tmp/gw
+
+export TF_ACC=1
+export VERSITYGW_ENDPOINT=http://127.0.0.1:7070
+export VERSITYGW_ACCESS_KEY=testaccess
+export VERSITYGW_SECRET_KEY=testsecret
+make testacc
+```
+
+### Additional Targets
+
+```bash
+make vet
+make fmt
+```
+
+### Using a Local Build
+
+```hcl
+# ~/.terraformrc
+provider_installation {
+  dev_overrides {
+    "freefair/versitygw" = "/Users/you/go/bin"
+  }
+  direct {}
+}
+```
+
+```bash
+make install
+```
+
+With `dev_overrides` in place, `terraform init` fails trying to resolve the
+overridden provider from the registry. Skip it and run `validate` / `plan` /
+`apply` directly — those resolve the local binary correctly.
+
+### Releasing
+
+Tag-driven through GoReleaser. Requires the `GPG_PRIVATE_KEY` and `PASSPHRASE`
+secrets on the repository.
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Targets linux, darwin and windows on amd64/arm64, plus freebsd/amd64.
+
+## License
+
+[MIT](LICENSE)

@@ -1,0 +1,9 @@
+terraform-provider-versitygw
+dist/
+.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfvars
+.idea/
+.vscode/
+*.swp

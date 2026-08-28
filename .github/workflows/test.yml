@@ -1,0 +1,81 @@
+name: Tests
+
+on:
+  pull_request:
+    paths-ignore:
+      - "README.md"
+      - "CHANGELOG.md"
+      - "docs/**"
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - "README.md"
+      - "CHANGELOG.md"
+      - "docs/**"
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go build -v .
+
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go test -v -cover -timeout 120m ./...
+
+  vet:
+    name: Vet
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+
+  # A mock would only prove the provider agrees with itself. This runs the same
+  # steps against a real gateway, started without --admin-port so the admin
+  # routes sit on the S3 listener — the layout the endpoint fallback assumes.
+  testacc:
+    name: Acceptance tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      versitygw:
+        image: versity/versitygw:latest
+        ports:
+          - 7070:7070
+        env:
+          ROOT_ACCESS_KEY_ID: testaccess
+          ROOT_SECRET_ACCESS_KEY: testsecret
+          VGW_BACKEND: posix
+          VGW_BACKEND_ARG: /tmp/gw
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+      - run: go test -v -cover -timeout 30m ./...
+        env:
+          TF_ACC: "1"
+          VERSITYGW_ENDPOINT: http://127.0.0.1:7070
+          VERSITYGW_ACCESS_KEY: testaccess
+          VERSITYGW_SECRET_KEY: testsecret

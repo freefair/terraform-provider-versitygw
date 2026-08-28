@@ -1,0 +1,141 @@
+package provider_test
+
+import (
+	"fmt"
+	"os"
+	"testing"
+
+	"github.com/hashicorp/terraform-plugin-framework/providerserver"
+	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
+	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+
+	"github.com/freefair/terraform-provider-versitygw/internal/provider"
+)
+
+// Acceptance tests run against a REAL gateway, not a mock. A mock would only
+// prove the provider agrees with itself; what needs proving is that it agrees
+// with versitygw. Start one and export the same variables the provider reads:
+//
+//	docker run --rm -d -p 7070:7070 --name versitygw-acc \
+//	  -e ROOT_ACCESS_KEY_ID=testaccess -e ROOT_SECRET_ACCESS_KEY=testsecret \
+//	  versity/versitygw:latest posix /tmp/gw
+//
+//	export TF_ACC=1
+//	export VERSITYGW_ENDPOINT=http://127.0.0.1:7070
+//	export VERSITYGW_ACCESS_KEY=testaccess VERSITYGW_SECRET_KEY=testsecret
+//	make testacc
+//
+// The container is started without --admin-port on purpose: that is the layout
+// where the admin routes live on the S3 listener, and it exercises the
+// provider's endpoint fallback.
+
+var testAccProtoV6ProviderFactories = map[string]func() (tfprotov6.ProviderServer, error){
+	"versitygw": providerserver.NewProtocol6WithError(provider.New("test")()),
+}
+
+func testAccPreCheck(t *testing.T) {
+	t.Helper()
+	for _, key := range []string{"VERSITYGW_ENDPOINT", "VERSITYGW_ACCESS_KEY", "VERSITYGW_SECRET_KEY"} {
+		if os.Getenv(key) == "" {
+			t.Fatalf("%s must be set for acceptance tests — see the comment in provider_test.go", key)
+		}
+	}
+}
+
+func TestAccUserResource(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccUserConfig("acc-user", "initialsecret", "user"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("versitygw_user.test", "access_key", "acc-user"),
+					resource.TestCheckResourceAttr("versitygw_user.test", "role", "user"),
+					resource.TestCheckResourceAttr("versitygw_user.test", "user_id", "0"),
+				),
+			},
+			{
+				// The gateway returns the secret in its user listing, so an
+				// in-place secret change has to survive a refresh — this is
+				// the step that proves drift detection works on the key.
+				Config: testAccUserConfig("acc-user", "rotatedsecret", "userplus"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("versitygw_user.test", "secret_key", "rotatedsecret"),
+					resource.TestCheckResourceAttr("versitygw_user.test", "role", "userplus"),
+				),
+			},
+			{
+				// The framework looks for an "id" attribute unless told
+				// otherwise. This provider has none: the access key ID IS the
+				// identity, and a synthetic id would be a second name for it.
+				ResourceName:                         "versitygw_user.test",
+				ImportState:                          true,
+				ImportStateId:                        "acc-user",
+				ImportStateVerify:                    true,
+				ImportStateVerifyIdentifierAttribute: "access_key",
+			},
+		},
+	})
+}
+
+func TestAccBucketResource(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccBucketConfig("acc-owner-one"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("versitygw_bucket.test", "name", "acc-bucket"),
+					resource.TestCheckResourceAttr("versitygw_bucket.test", "owner", "acc-owner-one"),
+				),
+			},
+			{
+				// An ownership change is an in-place update, not a replacement
+				// — and it resets the bucket's ACL on the gateway side.
+				Config: testAccBucketConfig("acc-owner-two"),
+				Check: resource.TestCheckResourceAttr(
+					"versitygw_bucket.test", "owner", "acc-owner-two"),
+			},
+			{
+				ResourceName:                         "versitygw_bucket.test",
+				ImportState:                          true,
+				ImportStateId:                        "acc-bucket",
+				ImportStateVerify:                    true,
+				ImportStateVerifyIdentifierAttribute: "name",
+			},
+		},
+	})
+}
+
+func testAccUserConfig(access, secret, role string) string {
+	return fmt.Sprintf(`
+resource "versitygw_user" "test" {
+  access_key = %q
+  secret_key = %q
+  role       = %q
+}
+`, access, secret, role)
+}
+
+func testAccBucketConfig(owner string) string {
+	return fmt.Sprintf(`
+resource "versitygw_user" "one" {
+  access_key = "acc-owner-one"
+  secret_key = "ownersecretone"
+}
+
+resource "versitygw_user" "two" {
+  access_key = "acc-owner-two"
+  secret_key = "ownersecrettwo"
+}
+
+resource "versitygw_bucket" "test" {
+  name  = "acc-bucket"
+  owner = %q
+
+  depends_on = [versitygw_user.one, versitygw_user.two]
+}
+`, owner)
+}
