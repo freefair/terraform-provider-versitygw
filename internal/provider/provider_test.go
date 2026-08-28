@@ -785,3 +785,102 @@ resource "versitygw_bucket_cors_configuration" "test" {
 		},
 	})
 }
+
+func TestAccBucketWebsiteConfiguration(t *testing.T) {
+	cfg := func(body string) string {
+		return `
+resource "versitygw_user" "owner" {
+  access_key = "acc-website-owner"
+  secret_key = "websiteownersecret"
+}
+
+resource "versitygw_bucket" "test" {
+  name  = "acc-website"
+  owner = versitygw_user.owner.access_key
+}
+
+resource "versitygw_bucket_website_configuration" "test" {
+  bucket = versitygw_bucket.test.name
+` + body + `
+}
+`
+	}
+	const res = "versitygw_bucket_website_configuration.test"
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: cfg(`
+  index_document {
+    suffix = "index.html"
+  }
+  error_document {
+    key = "404.html"
+  }
+`),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(res, "index_document.suffix", "index.html"),
+					resource.TestCheckResourceAttr(res, "error_document.key", "404.html"),
+					resource.TestCheckResourceAttr(res, "routing_rule.#", "0"),
+				),
+			},
+			{
+				Config: cfg(`
+  index_document {
+    suffix = "index.html"
+  }
+  error_document {
+    key = "error.html"
+  }
+  routing_rule {
+    condition {
+      key_prefix_equals = "docs/"
+    }
+    redirect {
+      host_name               = "docs.example.com"
+      protocol                = "https"
+      http_redirect_code      = "301"
+      replace_key_prefix_with = "documents/"
+    }
+  }
+  routing_rule {
+    condition {
+      http_error_code_returned_equals = "404"
+    }
+    redirect {
+      replace_key_with = "missing.html"
+    }
+  }
+`),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(res, "error_document.key", "error.html"),
+					resource.TestCheckResourceAttr(res, "routing_rule.#", "2"),
+					resource.TestCheckResourceAttr(res, "routing_rule.0.redirect.replace_key_prefix_with", "documents/"),
+					resource.TestCheckResourceAttr(res, "routing_rule.1.condition.http_error_code_returned_equals", "404"),
+					resource.TestCheckNoResourceAttr(res, "routing_rule.1.redirect.host_name"),
+				),
+			},
+			{
+				ResourceName:                         res,
+				ImportState:                          true,
+				ImportStateId:                        "acc-website",
+				ImportStateVerify:                    true,
+				ImportStateVerifyIdentifierAttribute: "bucket",
+			},
+			{
+				Config: cfg(`
+  redirect_all_requests_to {
+    host_name = "www.example.com"
+    protocol  = "https"
+  }
+`),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(res, "redirect_all_requests_to.host_name", "www.example.com"),
+					resource.TestCheckNoResourceAttr(res, "index_document.suffix"),
+					resource.TestCheckResourceAttr(res, "routing_rule.#", "0"),
+				),
+			},
+		},
+	})
+}

@@ -439,3 +439,90 @@ func (c *Client) GetBucketCORS(ctx context.Context, bucket string) ([]CORSRule, 
 func (c *Client) DeleteBucketCORS(ctx context.Context, bucket string) error {
 	return c.deleteBucketSubresource(ctx, bucket, "cors", "NoSuchCORSConfiguration")
 }
+
+// Website. Stored by the gateway whether or not it runs a website listener;
+// GET always carries an empty <RoutingRules/>, which reads back as none.
+
+// WebsiteConfiguration mirrors s3response.WebsiteConfiguration upstream.
+type WebsiteConfiguration struct {
+	XMLName               xml.Name               `xml:"WebsiteConfiguration"`
+	IndexDocument         *IndexDocument         `xml:"IndexDocument,omitempty"`
+	ErrorDocument         *ErrorDocument         `xml:"ErrorDocument,omitempty"`
+	RedirectAllRequestsTo *RedirectAllRequestsTo `xml:"RedirectAllRequestsTo,omitempty"`
+	// A pointer, so that no rules means no element: `omitempty` does not
+	// suppress the parent of a "RoutingRules>RoutingRule" path.
+	RoutingRules *RoutingRules `xml:"RoutingRules,omitempty"`
+}
+
+// RoutingRules wraps the rule list.
+type RoutingRules struct {
+	Rules []RoutingRule `xml:"RoutingRule"`
+}
+
+// IndexDocument names the object served for a directory-style key.
+type IndexDocument struct {
+	Suffix string `xml:"Suffix"`
+}
+
+// ErrorDocument names the object served on a 4xx.
+type ErrorDocument struct {
+	Key string `xml:"Key"`
+}
+
+// RedirectAllRequestsTo sends every request elsewhere.
+type RedirectAllRequestsTo struct {
+	HostName string `xml:"HostName"`
+	Protocol string `xml:"Protocol,omitempty"`
+}
+
+// RoutingRule redirects requests matching Condition.
+type RoutingRule struct {
+	Condition *RoutingRuleCondition `xml:"Condition,omitempty"`
+	Redirect  *Redirect             `xml:"Redirect"`
+}
+
+// RoutingRuleCondition selects requests by key prefix or error code.
+type RoutingRuleCondition struct {
+	HTTPErrorCodeReturnedEquals string `xml:"HttpErrorCodeReturnedEquals,omitempty"`
+	KeyPrefixEquals             string `xml:"KeyPrefixEquals,omitempty"`
+}
+
+// Redirect says where a routing rule sends the request.
+type Redirect struct {
+	HostName             string `xml:"HostName,omitempty"`
+	HTTPRedirectCode     string `xml:"HttpRedirectCode,omitempty"`
+	Protocol             string `xml:"Protocol,omitempty"`
+	ReplaceKeyPrefixWith string `xml:"ReplaceKeyPrefixWith,omitempty"`
+	ReplaceKeyWith       string `xml:"ReplaceKeyWith,omitempty"`
+}
+
+// PutBucketWebsite replaces the website configuration.
+func (c *Client) PutBucketWebsite(ctx context.Context, bucket string, cfg WebsiteConfiguration) error {
+	body, err := xml.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("marshal website: %w", err)
+	}
+	return c.putBucketSubresource(ctx, bucket, "website", nil, body)
+}
+
+// GetBucketWebsite returns the configuration, or nil when the bucket has
+// none or does not exist. An empty RoutingRules element reads as none.
+func (c *Client) GetBucketWebsite(ctx context.Context, bucket string) (*WebsiteConfiguration, error) {
+	payload, err := c.getBucketSubresource(ctx, bucket, "website", "NoSuchWebsiteConfiguration")
+	if err != nil || payload == nil {
+		return nil, err
+	}
+	var cfg WebsiteConfiguration
+	if err := xml.Unmarshal(payload, &cfg); err != nil {
+		return nil, fmt.Errorf("parse website: %w", err)
+	}
+	if cfg.RoutingRules != nil && len(cfg.RoutingRules.Rules) == 0 {
+		cfg.RoutingRules = nil
+	}
+	return &cfg, nil
+}
+
+// DeleteBucketWebsite removes the configuration.
+func (c *Client) DeleteBucketWebsite(ctx context.Context, bucket string) error {
+	return c.deleteBucketSubresource(ctx, bucket, "website", "NoSuchWebsiteConfiguration")
+}

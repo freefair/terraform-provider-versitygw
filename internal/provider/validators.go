@@ -6,3 +6,6 @@ import "regexp"
 // 3-63 characters, starting and ending alphanumerically. Length is checked
 // separately so the two failures produce distinct messages.
 var bucketNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]*[a-z0-9]$`)
+
+// noSlashPattern is what the gateway demands of an index document suffix.
+var noSlashPattern = regexp.MustCompile(`^[^/]+$`)

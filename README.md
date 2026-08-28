@@ -70,6 +70,7 @@ resource "versitygw_bucket" "artifacts" {
 | [`versitygw_bucket_ownership_controls`](docs/resources/bucket_ownership_controls.md) | Object ownership of a bucket; decides whether ACLs are allowed |
 | [`versitygw_bucket_acl`](docs/resources/bucket_acl.md) | Canned ACL or explicit grants to accounts |
 | [`versitygw_bucket_cors_configuration`](docs/resources/bucket_cors_configuration.md) | CORS rules for browsers talking to the gateway |
+| [`versitygw_bucket_website_configuration`](docs/resources/bucket_website_configuration.md) | Static website configuration; served only with a website listener |
 
 | Data source | Description |
 |---|---|
@@ -81,12 +82,10 @@ Full argument reference on the
 
 ### Roadmap
 
-The admin API is covered completely. What the gateway offers per bucket over
-the S3 API — website — is not yet (policy, versioning, object lock,
-ownership controls, ACL, tags and CORS are), and is planned as one resource each, shaped
-like the corresponding `aws_s3_bucket_*` resource. See
-[`docs/plans/`](docs/plans/README.md) for the plans and for what is
-deliberately left out.
+The admin API is covered completely, and so is everything the gateway offers
+per bucket over the S3 API — each as a resource shaped like the corresponding
+`aws_s3_bucket_*` one. See [`docs/plans/`](docs/plans/README.md) for the
+plans behind them and for what is deliberately left out.
 
 ## Key behaviours
 

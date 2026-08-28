@@ -25,7 +25,7 @@ interface does not carry is a `NotImplemented` answer with extra steps.
 | 05 | [Bucket tagging](05-bucket-tagging.md) — **done** | `tags` on `versitygw_bucket` | `tags` on `aws_s3_bucket` | 00 |
 | 08 | [Ownership controls](08-bucket-ownership-controls.md) — **done** | `versitygw_bucket_ownership_controls` | `aws_s3_bucket_ownership_controls` | 00 |
 | 06 | [CORS configuration](06-bucket-cors-configuration.md) — **done** | `versitygw_bucket_cors_configuration` | `aws_s3_bucket_cors_configuration` | 00 |
-| 07 | [Website configuration](07-bucket-website-configuration.md) | `versitygw_bucket_website_configuration` | `aws_s3_bucket_website_configuration` | 00 |
+| 07 | [Website configuration](07-bucket-website-configuration.md) — **done** | `versitygw_bucket_website_configuration` | `aws_s3_bucket_website_configuration` | 00 |
 | 09 | [Single-object data sources](09-data-sources-single.md) | `data.versitygw_user`, `data.versitygw_bucket` | `data.aws_iam_user`, `data.aws_s3_bucket` | — |
 
 Policy first: it is the only feature that grants access across account

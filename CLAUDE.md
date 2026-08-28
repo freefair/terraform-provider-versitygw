@@ -17,6 +17,7 @@ manages IAM accounts and buckets through the gateway's admin API.
 - `internal/provider/resource_bucket_ownership_controls.go` — `versitygw_bucket_ownership_controls`
 - `internal/provider/resource_bucket_acl.go` — `versitygw_bucket_acl`
 - `internal/provider/resource_bucket_cors_configuration.go` — `versitygw_bucket_cors_configuration`
+- `internal/provider/resource_bucket_website_configuration.go` — `versitygw_bucket_website_configuration`
 - `internal/provider/data_source_*.go` — `versitygw_users`, `versitygw_buckets`
 - `internal/client/` — SigV4-signed HTTP client; `admin.go` for the admin API, `s3.go` for bucket sub-resources on the S3 API
 - `docs/plans/` — one plan per missing bucket-level resource; `README.md` there is the roadmap
@@ -65,6 +66,9 @@ code without re-checking them breaks things silently.
 - **`DELETE ?cors` is real, and `PUT ?cors` validates.** Unsupported method →
   `InvalidRequest`, rule without origin or no rule → `MalformedXML`. Rules
   come back in order, elements within a rule reordered.
+- **`?website` is stored without a website listener, and `GET` always
+  carries an empty `<RoutingRules/>`.** Validation lives in
+  `s3response/website.go` upstream and is mirrored in `ValidateConfig`.
 - **There is no admin route to delete a bucket.** Deletion goes to the S3 API,
   which refuses a non-empty bucket.
 - **`change-bucket-owner` discards the bucket's ACL and policy — and nothing
