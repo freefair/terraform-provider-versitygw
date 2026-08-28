@@ -11,12 +11,12 @@ manages IAM accounts and buckets through the gateway's admin API.
 - `internal/provider/provider.go` — provider definition, schema, env fallbacks
 - `internal/provider/resource_user.go` — `versitygw_user`
 - `internal/provider/resource_bucket.go` — `versitygw_bucket` (incl. `tags`)
-- `internal/provider/resource_bucket_cors_configuration.go` — `versitygw_bucket_cors_configuration`
 - `internal/provider/resource_bucket_policy.go` — `versitygw_bucket_policy`
 - `internal/provider/resource_bucket_versioning.go` — `versitygw_bucket_versioning`
 - `internal/provider/resource_bucket_object_lock_configuration.go` — `versitygw_bucket_object_lock_configuration`
 - `internal/provider/resource_bucket_ownership_controls.go` — `versitygw_bucket_ownership_controls`
 - `internal/provider/resource_bucket_acl.go` — `versitygw_bucket_acl`
+- `internal/provider/resource_bucket_cors_configuration.go` — `versitygw_bucket_cors_configuration`
 - `internal/provider/data_source_*.go` — `versitygw_users`, `versitygw_buckets`
 - `internal/client/` — SigV4-signed HTTP client; `admin.go` for the admin API, `s3.go` for bucket sub-resources on the S3 API
 - `docs/plans/` — one plan per missing bucket-level resource; `README.md` there is the roadmap
