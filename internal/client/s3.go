@@ -189,3 +189,57 @@ func (c *Client) GetObjectLockConfiguration(ctx context.Context, bucket string) 
 	}
 	return &cfg, nil
 }
+
+// Ownership controls. Unlike versioning and object lock these have a real
+// DELETE route (measured: the bucket survives it).
+
+// ObjectOwnership values the gateway accepts.
+const (
+	OwnershipBucketOwnerEnforced  = "BucketOwnerEnforced"
+	OwnershipBucketOwnerPreferred = "BucketOwnerPreferred"
+	OwnershipObjectWriter         = "ObjectWriter"
+)
+
+type ownershipControls struct {
+	XMLName xml.Name `xml:"OwnershipControls"`
+	Rules   []struct {
+		ObjectOwnership string `xml:"ObjectOwnership"`
+	} `xml:"Rule"`
+}
+
+// PutBucketOwnershipControls sets the object ownership rule.
+func (c *Client) PutBucketOwnershipControls(ctx context.Context, bucket, ownership string) error {
+	var cfg ownershipControls
+	cfg.Rules = append(cfg.Rules, struct {
+		ObjectOwnership string `xml:"ObjectOwnership"`
+	}{ownership})
+	body, err := xml.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("marshal ownership controls: %w", err)
+	}
+	return c.putBucketSubresource(ctx, bucket, "ownershipControls", nil, body)
+}
+
+// GetBucketOwnershipControls returns the object ownership, or "" when the
+// bucket has no controls (after a delete) or does not exist. A fresh bucket
+// answers BucketOwnerEnforced without anyone having set it — that is the
+// gateway's default, and it is what disables ACLs.
+func (c *Client) GetBucketOwnershipControls(ctx context.Context, bucket string) (string, error) {
+	payload, err := c.getBucketSubresource(ctx, bucket, "ownershipControls", "OwnershipControlsNotFoundError")
+	if err != nil || payload == nil {
+		return "", err
+	}
+	var cfg ownershipControls
+	if err := xml.Unmarshal(payload, &cfg); err != nil {
+		return "", fmt.Errorf("parse ownership controls: %w", err)
+	}
+	if len(cfg.Rules) == 0 {
+		return "", nil
+	}
+	return cfg.Rules[0].ObjectOwnership, nil
+}
+
+// DeleteBucketOwnershipControls removes the controls.
+func (c *Client) DeleteBucketOwnershipControls(ctx context.Context, bucket string) error {
+	return c.deleteBucketSubresource(ctx, bucket, "ownershipControls", "OwnershipControlsNotFoundError")
+}

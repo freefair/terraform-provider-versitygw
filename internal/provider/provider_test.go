@@ -434,3 +434,47 @@ resource "versitygw_bucket_object_lock_configuration" "test" {
 	}
 	return cfg
 }
+
+func TestAccBucketOwnershipControls(t *testing.T) {
+	cfg := func(ownership string) string {
+		return fmt.Sprintf(`
+resource "versitygw_user" "owner" {
+  access_key = "acc-ownership-owner"
+  secret_key = "ownershipownersecret"
+}
+
+resource "versitygw_bucket" "test" {
+  name  = "acc-ownership"
+  owner = versitygw_user.owner.access_key
+}
+
+resource "versitygw_bucket_ownership_controls" "test" {
+  bucket = versitygw_bucket.test.name
+  rule {
+    object_ownership = %q
+  }
+}
+`, ownership)
+	}
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: cfg("ObjectWriter"),
+				Check:  resource.TestCheckResourceAttr("versitygw_bucket_ownership_controls.test", "rule.object_ownership", "ObjectWriter"),
+			},
+			{
+				Config: cfg("BucketOwnerPreferred"),
+				Check:  resource.TestCheckResourceAttr("versitygw_bucket_ownership_controls.test", "rule.object_ownership", "BucketOwnerPreferred"),
+			},
+			{
+				ResourceName:                         "versitygw_bucket_ownership_controls.test",
+				ImportState:                          true,
+				ImportStateId:                        "acc-ownership",
+				ImportStateVerify:                    true,
+				ImportStateVerifyIdentifierAttribute: "bucket",
+			},
+		},
+	})
+}

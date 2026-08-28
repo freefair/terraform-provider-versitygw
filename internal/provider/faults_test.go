@@ -363,3 +363,53 @@ func TestFaultObjectLock(t *testing.T) {
 		recover(g),
 	)
 }
+
+const faultOwnership = faultBucket + `
+resource "versitygw_bucket_ownership_controls" "test" {
+  bucket = versitygw_bucket.test.name
+  rule {
+    object_ownership = "ObjectWriter"
+  }
+}
+`
+
+const faultOwnershipChanged = faultBucket + `
+resource "versitygw_bucket_ownership_controls" "test" {
+  bucket = versitygw_bucket.test.name
+  rule {
+    object_ownership = "BucketOwnerPreferred"
+  }
+}
+`
+
+func TestFaultOwnershipControls(t *testing.T) {
+	newFakeGateway(t)
+	faultCase(t, expectError(faultBucket+`
+resource "versitygw_bucket_ownership_controls" "test" {
+  bucket = versitygw_bucket.test.name
+}
+`, `Missing rule`))
+
+	g := newFakeGateway(t)
+	g.fail("PUT /fault-bucket?ownershipControls", 404, "NoSuchBucket")
+	faultCase(t, expectError(faultOwnership, `Bucket does not exist`), recover(g))
+
+	g = newFakeGateway(t)
+	g.fail("PUT /fault-bucket?ownershipControls", 500, "InternalError")
+	faultCase(t, expectError(faultOwnership, `Cannot set the ownership controls`), recover(g))
+
+	g = newFakeGateway(t)
+	faultCase(t,
+		resource.TestStep{Config: faultOwnership},
+		resource.TestStep{PreConfig: func() { g.fail("GET /fault-bucket?ownershipControls", 500, "InternalError") },
+			Config: faultOwnership, ExpectError: regexp.MustCompile(`Cannot read the ownership controls`)},
+		resource.TestStep{PreConfig: func() { g.clearFaults(); g.fail("PUT /fault-bucket?ownershipControls", 500, "InternalError") },
+			Config: faultOwnershipChanged, ExpectError: regexp.MustCompile(`Cannot set the ownership controls`)},
+		resource.TestStep{PreConfig: func() { g.clearFaults(); g.fail("DELETE /fault-bucket?ownershipControls", 500, "InternalError") },
+			Config: faultBucket, ExpectError: regexp.MustCompile(`Cannot delete the ownership controls`)},
+		// Deleted behind Terraform's back → not-found → gone from state.
+		resource.TestStep{PreConfig: func() { g.clearFaults(); g.forgetOwnership("fault-bucket") },
+			Config: faultOwnership, PlanOnly: true, ExpectNonEmptyPlan: true},
+		recover(g),
+	)
+}
