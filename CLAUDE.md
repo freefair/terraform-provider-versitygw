@@ -11,8 +11,9 @@ manages IAM accounts and buckets through the gateway's admin API.
 - `internal/provider/provider.go` — provider definition, schema, env fallbacks
 - `internal/provider/resource_user.go` — `versitygw_user`
 - `internal/provider/resource_bucket.go` — `versitygw_bucket`
+- `internal/provider/resource_bucket_policy.go` — `versitygw_bucket_policy`
 - `internal/provider/data_source_*.go` — `versitygw_users`, `versitygw_buckets`
-- `internal/client/` — SigV4-signed HTTP client for the admin and S3 APIs
+- `internal/client/` — SigV4-signed HTTP client; `admin.go` for the admin API, `s3.go` for bucket sub-resources on the S3 API
 - `docs/plans/` — one plan per missing bucket-level resource; `README.md` there is the roadmap
 - Uses `terraform-plugin-framework` (not SDKv2)
 
@@ -60,6 +61,10 @@ code without re-checking them breaks things silently.
   `XAdminUserNotFound` and `NoSuchBucket` mean the same thing to a caller.
 - **A non-XML error body stays readable.** A proxy answering with HTML must not
   turn into a "malformed XML" complaint that points at the wrong component.
+- **Bucket sub-resources share one client shape** (`s3.go`): path-style
+  `PUT/GET/DELETE /<bucket>?<subresource>`, `GET` returns `(nil, nil)` for the
+  sub-resource's own not-found code, `DELETE` treats absence as done. New
+  sub-resources add typed wrappers there, not new plumbing.
 - **The root account is out of scope.** It lives on the command line, never in
   the IAM service, so it appears in no listing and a resource for it would read
   back as missing on every plan.
@@ -80,6 +85,20 @@ are measured against. `compat.yml` runs weekly against `:latest` with Terraform
 latest and OpenTofu latest. A red compat run means: bump the pin in a deliberate
 commit and re-check every fact above. Dependabot covers Go modules and Actions;
 it cannot see the image pin.
+
+## Workflow: finishing a task
+
+- **Codex review before the PR.** When a task is complete, run a review through
+  the Codex MCP (`mcp__codex__codex`, model `gpt-5.6-sol` — the default in `~/.codex/config.toml`; the short name `sol` is rejected — reasoning effort `high`) on the diff and
+  act on its findings before opening the pull request. Tell Codex explicitly
+  that it must only review — no edits, no commands beyond reading — and that
+  the findings must be its final answer, not a remark in passing; otherwise it
+  starts fixing things or buries the result.
+- **Self-merge is allowed** when the acceptance tests against a real
+  `versitygw` in Docker are green and coverage is around 100 %. Reasonable
+  beats absolute: do what is needed, but a solid 90 % is better than a
+  contrived 100 %. Anything below that, or a red run, waits for Dennis.
+- Work on a feature branch; `main` is behind a merge queue.
 
 ## Release
 

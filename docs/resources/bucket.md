@@ -37,8 +37,9 @@ resource "versitygw_bucket" "artifacts" {
 
 ~> This is upstream behaviour, not a provider limitation. When ownership moves,
 the gateway removes the bucket's existing ACL and policy and applies a fresh
-default for the new owner. Anything set on the bucket has to be reapplied
-afterwards.
+default for the new owner. A `versitygw_bucket_policy` on the bucket shows up
+as missing on the next plan and is recreated; anything set outside Terraform
+has to be reapplied by hand.
 
 Because `name` forces replacement, an in-place update of this resource can only
 ever be an ownership change — so every update carries that consequence.

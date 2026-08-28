@@ -1,12 +1,12 @@
 ---
 page_title: "Provider: versitygw"
 description: |-
-  Manage accounts and buckets on a Versity S3 Gateway.
+  Manage accounts, buckets and bucket policies on a Versity S3 Gateway.
 ---
 
 # versitygw Provider
 
-Manages accounts and buckets on a [Versity S3 Gateway](https://github.com/versity/versitygw),
+Manages accounts, buckets and bucket policies on a [Versity S3 Gateway](https://github.com/versity/versitygw),
 an S3-compatible gateway over a POSIX filesystem, ScoutFS, Azure Blob Storage or
 another S3 server.
 

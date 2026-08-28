@@ -3,10 +3,12 @@ package client
 import (
 	"context"
 	"encoding/xml"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // newTestClient points a client at a stub and returns both. The stub records
@@ -308,5 +310,256 @@ func TestMutablePropsOmitsNothingItShouldNotSend(t *testing.T) {
 	}
 	if strings.Contains(got, "<UserID>") {
 		t.Errorf("a nil UserID must not be sent at all: %s", got)
+	}
+}
+
+func TestBucketSubresourcesGoToTheS3Endpoint(t *testing.T) {
+	var got struct {
+		method, path, query string
+		body                string
+	}
+	c, srv := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		// The SigV4 signer canonicalises the query to `policy=`; what
+		// matters is that the sub-resource key is present.
+		got.method, got.path, got.body = r.Method, r.URL.Path, string(b)
+		if r.URL.Query().Has("policy") {
+			got.query = "policy"
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	// A separate admin endpoint must not attract sub-resource calls: they
+	// belong to the S3 API even when the admin API lives elsewhere.
+	c.cfg.AdminEndpoint = "http://admin.invalid"
+	_ = srv
+
+	if err := c.PutBucketPolicy(context.Background(), "my-bucket", []byte(`{"Version":"2012-10-17"}`)); err != nil {
+		t.Fatalf("PutBucketPolicy: %v", err)
+	}
+	if got.method != http.MethodPut || got.path != "/my-bucket" || got.query != "policy" {
+		t.Errorf("PUT went to %s %s?%s, want PUT /my-bucket?policy", got.method, got.path, got.query)
+	}
+	if got.body != `{"Version":"2012-10-17"}` {
+		t.Errorf("body = %q, sent verbatim expected", got.body)
+	}
+
+	if err := c.DeleteBucketPolicy(context.Background(), "my-bucket"); err != nil {
+		t.Fatalf("DeleteBucketPolicy: %v", err)
+	}
+	if got.method != http.MethodDelete || got.query != "policy" {
+		t.Errorf("DELETE went to %s ?%s", got.method, got.query)
+	}
+}
+
+func TestGetBucketSubresourceReturnsNilWhenAbsent(t *testing.T) {
+	cases := map[string]struct {
+		status int
+		body   string
+		want   []byte
+	}{
+		"no policy":  {http.StatusNotFound, `<Error><Code>NoSuchBucketPolicy</Code></Error>`, nil},
+		"no bucket":  {http.StatusNotFound, `<Error><Code>NoSuchBucket</Code></Error>`, nil},
+		"has policy": {http.StatusOK, `{"Version":"2012-10-17"}`, []byte(`{"Version":"2012-10-17"}`)},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			})
+			got, err := c.GetBucketPolicy(context.Background(), "b")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if string(got) != string(tc.want) {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+
+	// Anything that is not "absent" is an error the caller must see — a
+	// bare 404 from a proxy or a wrong path especially, because treating it
+	// as absence would drop the resource from state.
+	for name, body := range map[string]string{
+		"access denied":   `<Error><Code>AccessDenied</Code></Error>`,
+		"bare 404":        `<html>not found</html>`,
+		"other not-found": `<Error><Code>NoSuchKey</Code></Error>`,
+	} {
+		status := http.StatusNotFound
+		if name == "access denied" {
+			status = http.StatusForbidden
+		}
+		c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(status)
+			_, _ = w.Write([]byte(body))
+		})
+		if _, err := c.GetBucketPolicy(context.Background(), "b"); err == nil {
+			t.Errorf("%s was swallowed as absence", name)
+		}
+		if err := c.DeleteBucketPolicy(context.Background(), "b"); err == nil {
+			t.Errorf("delete: %s was swallowed as success", name)
+		}
+	}
+}
+
+func TestDeleteBucketSubresourceTreatsAbsenceAsDone(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`<Error><Code>NoSuchBucketPolicy</Code></Error>`))
+	})
+	if err := c.DeleteBucketPolicy(context.Background(), "b"); err != nil {
+		t.Errorf("deleting an absent policy should succeed, got %v", err)
+	}
+}
+
+func TestSubresourceNotFoundCodesAreRecognised(t *testing.T) {
+	for _, code := range []string{
+		"NoSuchBucketPolicy", "NoSuchCORSConfiguration", "NoSuchWebsiteConfiguration",
+		"NoSuchTagSet", "ObjectLockConfigurationNotFoundError", "OwnershipControlsNotFoundError",
+	} {
+		if !(&APIError{Code: code, StatusCode: http.StatusOK}).IsNotFound() {
+			t.Errorf("%s not recognised as not-found", code)
+		}
+	}
+	for _, code := range []string{"NotImplemented", "XAdminMethodNotSupported"} {
+		if !(&APIError{Code: code}).IsNotImplemented() {
+			t.Errorf("%s not recognised as not-implemented", code)
+		}
+	}
+}
+
+func TestUpdateUserSendsOnlyWhatChanges(t *testing.T) {
+	var got struct {
+		path, query, body string
+	}
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		got.path, got.query, got.body = r.URL.Path, r.URL.Query().Get("access"), string(b)
+		w.WriteHeader(http.StatusOK)
+	})
+	secret := "newsecret"
+	uid := 7
+	if err := c.UpdateUser(context.Background(), "alice", MutableProps{Secret: &secret, Role: RoleAdmin, UserID: &uid}); err != nil {
+		t.Fatalf("UpdateUser: %v", err)
+	}
+	if got.path != "/update-user" || got.query != "alice" {
+		t.Errorf("went to %s?access=%s", got.path, got.query)
+	}
+	for _, want := range []string{"<Secret>newsecret</Secret>", "<Role>admin</Role>", "<UserID>7</UserID>"} {
+		if !strings.Contains(got.body, want) {
+			t.Errorf("body lacks %s: %s", want, got.body)
+		}
+	}
+}
+
+func TestListBucketsParsesUpstreamShape(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/list-buckets" || r.Method != http.MethodPatch {
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`<ListBucketsResult><Buckets><Name>a</Name><Owner>alice</Owner></Buckets><Buckets><Name>b</Name><Owner>bob</Owner></Buckets></ListBucketsResult>`))
+	})
+	buckets, err := c.ListBuckets(context.Background())
+	if err != nil {
+		t.Fatalf("ListBuckets: %v", err)
+	}
+	if len(buckets) != 2 || buckets[1].Name != "b" || buckets[1].Owner != "bob" {
+		t.Errorf("parsed %+v", buckets)
+	}
+
+	if got, err := c.GetBucket(context.Background(), "b"); err != nil || got == nil || got.Owner != "bob" {
+		t.Errorf("GetBucket(b) = %+v, %v", got, err)
+	}
+	if got, err := c.GetBucket(context.Background(), "zzz"); err != nil || got != nil {
+		t.Errorf("GetBucket(zzz) = %+v, %v; want nil, nil", got, err)
+	}
+}
+
+func TestListingErrorsPropagate(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`<Error><Code>InternalError</Code><Message>boom</Message></Error>`))
+	})
+	if _, err := c.ListBuckets(context.Background()); err == nil {
+		t.Error("ListBuckets swallowed a 500")
+	}
+	if _, err := c.GetBucket(context.Background(), "b"); err == nil {
+		t.Error("GetBucket swallowed a 500")
+	}
+	if _, err := c.GetUser(context.Background(), "u"); err == nil {
+		t.Error("GetUser swallowed a 500")
+	}
+
+	// A body that is not the documented XML is a parse error, not a panic
+	// and not a silently empty list.
+	c, _ = newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`<<not xml`))
+	})
+	if _, err := c.ListBuckets(context.Background()); err == nil {
+		t.Error("ListBuckets accepted garbage")
+	}
+	if _, err := c.ListUsers(context.Background()); err == nil {
+		t.Error("ListUsers accepted garbage")
+	}
+}
+
+func TestNewHonoursExplicitSettings(t *testing.T) {
+	c, err := New(Config{
+		Endpoint:      "https://s3.example.com",
+		AdminEndpoint: "https://admin.example.com/",
+		AccessKey:     "a",
+		SecretKey:     "s",
+		Region:        "eu-central-1",
+		Insecure:      true,
+		Timeout:       5 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if c.AdminEndpoint() != "https://admin.example.com" {
+		t.Errorf("admin endpoint = %q", c.AdminEndpoint())
+	}
+	if c.cfg.Region != "eu-central-1" || c.cfg.Timeout != 5*time.Second {
+		t.Errorf("settings not applied: %+v", c.cfg)
+	}
+	tr, ok := c.http.Transport.(*http.Transport)
+	if !ok || tr.TLSClientConfig == nil || !tr.TLSClientConfig.InsecureSkipVerify {
+		t.Error("Insecure did not configure the transport")
+	}
+	if _, err := New(Config{Endpoint: "http://[::1", AccessKey: "a", SecretKey: "s"}); err == nil {
+		t.Error("unparseable endpoint accepted")
+	}
+}
+
+func TestTransportFailuresNameTheRequest(t *testing.T) {
+	c, srv := newTestClient(t, func(http.ResponseWriter, *http.Request) {})
+	srv.Close()
+	_, err := c.ListUsers(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "/list-users") {
+		t.Errorf("error does not say which request failed: %v", err)
+	}
+}
+
+func TestAPIErrorVocabulary(t *testing.T) {
+	if got := (&APIError{Code: "NoSuchBucket", StatusCode: 404}).Error(); got != "NoSuchBucket (HTTP 404)" {
+		t.Errorf("message-less error = %q", got)
+	}
+	for _, code := range []string{"XAdminUserExists", "BucketAlreadyExists", "BucketAlreadyOwnedByYou"} {
+		if !(&APIError{Code: code}).IsConflict() {
+			t.Errorf("%s not a conflict", code)
+		}
+	}
+	if (&APIError{Code: "AccessDenied"}).IsConflict() {
+		t.Error("AccessDenied is not a conflict")
+	}
+	if roles := Roles(); len(roles) != 3 || roles[0] != RoleUser {
+		t.Errorf("Roles() = %v", roles)
+	}
+}
+
+func TestEmptyErrorBodyStaysReadable(t *testing.T) {
+	err := parseAPIError(http.StatusBadGateway, nil)
+	if !strings.Contains(err.Error(), "no response body") {
+		t.Errorf("empty body not explained: %v", err)
 	}
 }

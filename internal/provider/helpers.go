@@ -43,3 +43,7 @@ func isNotFound(err error) bool {
 	apiErr, ok := asAPIError(err)
 	return ok && apiErr.IsNotFound()
 }
+
+// diagAppender is the part of diag.Diagnostics resources use to report.
+// Naming it keeps helper signatures readable.
+type diagAppender = diag.Diagnostics
