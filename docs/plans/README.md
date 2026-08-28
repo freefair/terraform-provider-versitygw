@@ -21,7 +21,7 @@ interface does not carry is a `NotImplemented` answer with extra steps.
 | 01 | [Bucket policy](01-bucket-policy.md) — **done** | `versitygw_bucket_policy` | `aws_s3_bucket_policy` | 00 |
 | 03 | [Bucket versioning](03-bucket-versioning.md) — **done** | `versitygw_bucket_versioning` | `aws_s3_bucket_versioning` | 00 |
 | 04 | [Object lock configuration](04-bucket-object-lock-configuration.md) — **done** | `versitygw_bucket_object_lock_configuration` | `aws_s3_bucket_object_lock_configuration` | 00, 03 |
-| 02 | [Bucket ACL](02-bucket-acl.md) | `versitygw_bucket_acl` | `aws_s3_bucket_acl` | 00, 08 |
+| 02 | [Bucket ACL](02-bucket-acl.md) — **done** | `versitygw_bucket_acl` | `aws_s3_bucket_acl` | 00, 08 |
 | 05 | [Bucket tagging](05-bucket-tagging.md) | `tags` on `versitygw_bucket` | `tags` on `aws_s3_bucket` | 00 |
 | 08 | [Ownership controls](08-bucket-ownership-controls.md) — **done** | `versitygw_bucket_ownership_controls` | `aws_s3_bucket_ownership_controls` | 00 |
 | 06 | [CORS configuration](06-bucket-cors-configuration.md) | `versitygw_bucket_cors_configuration` | `aws_s3_bucket_cors_configuration` | 00 |

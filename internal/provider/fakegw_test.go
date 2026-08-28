@@ -34,13 +34,18 @@ type fakeGateway struct {
 	// ownership per bucket; a fresh bucket answers BucketOwnerEnforced and
 	// a deleted entry answers not-found — exactly what the gateway does.
 	ownership map[string]string
-	faults    map[string]fault // "METHOD /path[?sub]" -> answer
+	// explicit ACL grants per bucket, without the owner's implicit
+	// FULL_CONTROL, which GET adds the way the gateway does.
+	acls   map[string][]fakeGrant
+	faults map[string]fault // "METHOD /path[?sub]" -> answer
 }
 
 type fakeAccount struct {
 	Access, Secret, Role       string
 	UserID, GroupID, ProjectID int
 }
+
+type fakeGrant struct{ Type, ID, Permission string }
 
 type fault struct {
 	status int
@@ -57,6 +62,7 @@ func newFakeGateway(t *testing.T) *fakeGateway {
 		versioning: map[string]string{},
 		locks:      map[string][]byte{},
 		ownership:  map[string]string{},
+		acls:       map[string][]fakeGrant{},
 		faults:     map[string]fault{},
 	}
 	g.srv = httptest.NewServer(http.HandlerFunc(g.handle))
@@ -100,6 +106,14 @@ func (g *fakeGateway) forgetBucket(name string) {
 	delete(g.versioning, name)
 	delete(g.locks, name)
 	delete(g.ownership, name)
+	delete(g.acls, name)
+}
+
+// resetACL is what change-bucket-owner does to the ACL upstream.
+func (g *fakeGateway) resetACL(name string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	delete(g.acls, name)
 }
 
 // forgetOwnership drops the ownership entry, as a DELETE from the CLI would.
@@ -131,7 +145,7 @@ func (g *fakeGateway) handle(w http.ResponseWriter, r *http.Request) {
 	defer g.mu.Unlock()
 
 	route := r.Method + " " + r.URL.Path
-	for _, sub := range []string{"policy", "versioning", "object-lock", "ownershipControls"} {
+	for _, sub := range []string{"policy", "versioning", "object-lock", "ownershipControls", "acl"} {
 		if r.URL.Query().Has(sub) {
 			route += "?" + sub
 		}
@@ -222,6 +236,7 @@ func (g *fakeGateway) handle(w http.ResponseWriter, r *http.Request) {
 		}
 		g.buckets[q.Get("bucket")] = q.Get("owner")
 		delete(g.policies, q.Get("bucket")) // upstream drops the policy too
+		delete(g.acls, q.Get("bucket"))     // and applies a fresh default ACL
 		w.WriteHeader(200)
 
 	case r.Method == http.MethodPatch && strings.HasSuffix(r.URL.Path, "/create"):
@@ -344,6 +359,78 @@ func (g *fakeGateway) handle(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(204)
 		default:
 			g.t.Errorf("fake gateway: %s on ?ownershipControls", r.Method)
+			s3Error(w, 405, "MethodNotAllowed")
+		}
+
+	case r.URL.Query().Has("acl") && r.Method != http.MethodDelete:
+		name := strings.TrimPrefix(r.URL.Path, "/")
+		owner, ok := g.buckets[name]
+		if !ok {
+			s3Error(w, 404, "NoSuchBucket")
+			return
+		}
+		switch r.Method {
+		case http.MethodPut:
+			if g.ownership[name] == "BucketOwnerEnforced" {
+				s3Error(w, 400, "AccessControlListNotSupported")
+				return
+			}
+			switch canned := r.Header.Get("x-amz-acl"); canned {
+			case "private":
+				g.acls[name] = nil
+			case "public-read":
+				g.acls[name] = []fakeGrant{{"Group", "all-users", "READ"}}
+			case "public-read-write":
+				g.acls[name] = []fakeGrant{{"Group", "all-users", "READ"}, {"Group", "all-users", "WRITE"}}
+			case "":
+				var acp struct {
+					Owner  struct{ ID string }
+					Grants []struct {
+						Grantee struct {
+							Type string `xml:"http://www.w3.org/2001/XMLSchema-instance type,attr"`
+							ID   string
+						}
+						Permission string
+					} `xml:"AccessControlList>Grant"`
+				}
+				if err := xml.Unmarshal(body, &acp); err != nil {
+					s3Error(w, 400, "MalformedACLError")
+					return
+				}
+				if acp.Owner.ID != owner {
+					s3Error(w, 400, "InvalidArgument")
+					return
+				}
+				var grants []fakeGrant
+				for _, gr := range acp.Grants {
+					// Measured: the gateway resolves every grantee as an
+					// account — an unknown one and a Group alike answer 500.
+					if _, exists := g.users[gr.Grantee.ID]; !exists {
+						s3Error(w, 500, "InternalError")
+						return
+					}
+					if gr.Grantee.Type == "CanonicalUser" && gr.Grantee.ID == owner && gr.Permission == "FULL_CONTROL" {
+						continue
+					}
+					grants = append(grants, fakeGrant{gr.Grantee.Type, gr.Grantee.ID, gr.Permission})
+				}
+				g.acls[name] = grants
+			default:
+				s3Error(w, 400, "InvalidArgument")
+				return
+			}
+			w.WriteHeader(200)
+		case http.MethodGet:
+			var sb strings.Builder
+			fmt.Fprintf(&sb, `<AccessControlPolicy xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Owner><ID>%s</ID></Owner><AccessControlList>`, owner)
+			all := append([]fakeGrant{{"CanonicalUser", owner, "FULL_CONTROL"}}, g.acls[name]...)
+			for _, gr := range all {
+				fmt.Fprintf(&sb, `<Grant><Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="%s"><ID>%s</ID></Grantee><Permission>%s</Permission></Grant>`, gr.Type, gr.ID, gr.Permission)
+			}
+			sb.WriteString(`</AccessControlList></AccessControlPolicy>`)
+			_, _ = io.WriteString(w, sb.String())
+		default:
+			g.t.Errorf("fake gateway: %s on ?acl", r.Method)
 			s3Error(w, 405, "MethodNotAllowed")
 		}
 

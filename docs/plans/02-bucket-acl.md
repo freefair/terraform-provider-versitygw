@@ -26,7 +26,11 @@ Further measurements (v1.7.0):
 - A grant for a non-existent account → HTTP 500 `InternalError` (upstream
   bug; map to a diagnostic suggesting the account may not exist).
 - An empty grant list resets to owner-only FULL_CONTROL; the owner grant is
-  always present on read even if not sent.
+  always present on read even if not sent — and is **duplicated** if sent.
+- **Explicit `Group` grantees answer HTTP 500 in every form** (`all-users`,
+  `AllUsers`, the AWS URI): the gateway resolves each grantee as an account.
+  Public access exists only through the canned ACLs, so the resource takes
+  `CanonicalUser` grantees only.
 
 ## Schema
 

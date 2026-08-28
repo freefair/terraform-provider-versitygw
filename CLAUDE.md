@@ -15,6 +15,7 @@ manages IAM accounts and buckets through the gateway's admin API.
 - `internal/provider/resource_bucket_versioning.go` — `versitygw_bucket_versioning`
 - `internal/provider/resource_bucket_object_lock_configuration.go` — `versitygw_bucket_object_lock_configuration`
 - `internal/provider/resource_bucket_ownership_controls.go` — `versitygw_bucket_ownership_controls`
+- `internal/provider/resource_bucket_acl.go` — `versitygw_bucket_acl`
 - `internal/provider/data_source_*.go` — `versitygw_users`, `versitygw_buckets`
 - `internal/client/` — SigV4-signed HTTP client; `admin.go` for the admin API, `s3.go` for bucket sub-resources on the S3 API
 - `docs/plans/` — one plan per missing bucket-level resource; `README.md` there is the roadmap
@@ -52,6 +53,11 @@ code without re-checking them breaks things silently.
 - **A fresh bucket is `BucketOwnerEnforced`, which disables ACLs**
   (`PUT ?acl` → `AccessControlListNotSupported`). Ownership controls have a
   real `DELETE`; afterwards the bucket reports none, not the default.
+- **Explicit ACL grants resolve every grantee as an account.** A `Group`
+  grantee in any spelling, or an unknown access key, answers HTTP 500
+  `InternalError`; public access exists only via canned ACLs. The document's
+  owner must be the real owner (`InvalidArgument` otherwise) and the owner's
+  `FULL_CONTROL` grant is always present on read, duplicated if sent.
 - **There is no admin route to delete a bucket.** Deletion goes to the S3 API,
   which refuses a non-empty bucket.
 - **`change-bucket-owner` discards the bucket's ACL and policy — and nothing
