@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"encoding/xml"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -308,5 +309,105 @@ func TestMutablePropsOmitsNothingItShouldNotSend(t *testing.T) {
 	}
 	if strings.Contains(got, "<UserID>") {
 		t.Errorf("a nil UserID must not be sent at all: %s", got)
+	}
+}
+
+func TestBucketSubresourcesGoToTheS3Endpoint(t *testing.T) {
+	var got struct {
+		method, path, query string
+		body                string
+	}
+	c, srv := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		// The SigV4 signer canonicalises the query to `policy=`; what
+		// matters is that the sub-resource key is present.
+		got.method, got.path, got.body = r.Method, r.URL.Path, string(b)
+		if r.URL.Query().Has("policy") {
+			got.query = "policy"
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	// A separate admin endpoint must not attract sub-resource calls: they
+	// belong to the S3 API even when the admin API lives elsewhere.
+	c.cfg.AdminEndpoint = "http://admin.invalid"
+	_ = srv
+
+	if err := c.PutBucketPolicy(context.Background(), "my-bucket", []byte(`{"Version":"2012-10-17"}`)); err != nil {
+		t.Fatalf("PutBucketPolicy: %v", err)
+	}
+	if got.method != http.MethodPut || got.path != "/my-bucket" || got.query != "policy" {
+		t.Errorf("PUT went to %s %s?%s, want PUT /my-bucket?policy", got.method, got.path, got.query)
+	}
+	if got.body != `{"Version":"2012-10-17"}` {
+		t.Errorf("body = %q, sent verbatim expected", got.body)
+	}
+
+	if err := c.DeleteBucketPolicy(context.Background(), "my-bucket"); err != nil {
+		t.Fatalf("DeleteBucketPolicy: %v", err)
+	}
+	if got.method != http.MethodDelete || got.query != "policy" {
+		t.Errorf("DELETE went to %s ?%s", got.method, got.query)
+	}
+}
+
+func TestGetBucketSubresourceReturnsNilWhenAbsent(t *testing.T) {
+	cases := map[string]struct {
+		status int
+		body   string
+		want   []byte
+	}{
+		"no policy":  {http.StatusNotFound, `<Error><Code>NoSuchBucketPolicy</Code></Error>`, nil},
+		"no bucket":  {http.StatusNotFound, `<Error><Code>NoSuchBucket</Code></Error>`, nil},
+		"has policy": {http.StatusOK, `{"Version":"2012-10-17"}`, []byte(`{"Version":"2012-10-17"}`)},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			})
+			got, err := c.GetBucketPolicy(context.Background(), "b")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if string(got) != string(tc.want) {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+
+	// Anything that is not "absent" is an error the caller must see.
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`<Error><Code>AccessDenied</Code></Error>`))
+	})
+	if _, err := c.GetBucketPolicy(context.Background(), "b"); err == nil {
+		t.Error("AccessDenied was swallowed as absence")
+	}
+}
+
+func TestDeleteBucketSubresourceTreatsAbsenceAsDone(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`<Error><Code>NoSuchBucketPolicy</Code></Error>`))
+	})
+	if err := c.DeleteBucketPolicy(context.Background(), "b"); err != nil {
+		t.Errorf("deleting an absent policy should succeed, got %v", err)
+	}
+}
+
+func TestSubresourceNotFoundCodesAreRecognised(t *testing.T) {
+	for _, code := range []string{
+		"NoSuchBucketPolicy", "NoSuchCORSConfiguration", "NoSuchWebsiteConfiguration",
+		"NoSuchTagSet", "ObjectLockConfigurationNotFoundError", "OwnershipControlsNotFoundError",
+	} {
+		if !(&APIError{Code: code, StatusCode: http.StatusOK}).IsNotFound() {
+			t.Errorf("%s not recognised as not-found", code)
+		}
+	}
+	for _, code := range []string{"NotImplemented", "XAdminMethodNotSupported"} {
+		if !(&APIError{Code: code}).IsNotImplemented() {
+			t.Errorf("%s not recognised as not-implemented", code)
+		}
 	}
 }

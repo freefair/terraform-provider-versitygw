@@ -76,15 +76,26 @@ func (e *APIError) Error() string {
 
 // IsNotFound reports whether the object the request addressed does not exist.
 //
-// Both codes are checked because the two APIs disagree: the admin API answers
-// XAdminUserNotFound, the S3 API answers NoSuchBucket. A 404 alone is not
-// enough to go by — a wrong endpoint path produces one too.
+// The codes are listed because the APIs disagree: the admin API answers
+// XAdminUserNotFound, the S3 API answers NoSuchBucket, and each bucket
+// sub-resource has a code of its own (s3err/s3err.go upstream). A 404 alone
+// is not enough to go by — a wrong endpoint path produces one too.
 func (e *APIError) IsNotFound() bool {
 	switch e.Code {
-	case "XAdminUserNotFound", "NoSuchBucket", "NoSuchKey":
+	case "XAdminUserNotFound", "NoSuchBucket", "NoSuchKey",
+		"NoSuchBucketPolicy", "NoSuchCORSConfiguration", "NoSuchWebsiteConfiguration",
+		"NoSuchTagSet", "ObjectLockConfigurationNotFoundError", "OwnershipControlsNotFoundError":
 		return true
 	}
 	return e.StatusCode == http.StatusNotFound
+}
+
+// IsNotImplemented reports whether the gateway refuses the operation as
+// such — a feature its backend lacks, or one switched off on the command
+// line (--disable-acl). Distinct from a bad request: nothing in the
+// configuration fixes it.
+func (e *APIError) IsNotImplemented() bool {
+	return e.Code == "NotImplemented" || e.Code == "XAdminMethodNotSupported"
 }
 
 // IsConflict reports whether the object already exists.
