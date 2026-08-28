@@ -277,9 +277,11 @@ func TestNotFoundIsRecognisedForBothAPIs(t *testing.T) {
 		err  APIError
 		want bool
 	}{
-		"admin user":    {APIError{Code: "XAdminUserNotFound", StatusCode: 404}, true},
-		"s3 bucket":     {APIError{Code: "NoSuchBucket", StatusCode: 404}, true},
-		"bare 404":      {APIError{Code: "Not Found", StatusCode: 404}, true},
+		"admin user": {APIError{Code: "XAdminUserNotFound", StatusCode: 404}, true},
+		"s3 bucket":  {APIError{Code: "NoSuchBucket", StatusCode: 404}, true},
+		// A proxy or an unmounted admin endpoint answers 404 without a
+		// gateway code. That is an error to show, not an absent object.
+		"bare 404":      {APIError{Code: "Not Found", StatusCode: 404}, false},
 		"access denied": {APIError{Code: "AccessDenied", StatusCode: 403}, false},
 		"conflict":      {APIError{Code: "XAdminUserExists", StatusCode: 409}, false},
 	}

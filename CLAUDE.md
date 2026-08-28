@@ -59,6 +59,9 @@ code without re-checking them breaks things silently.
 - **Errors are typed.** `client.APIError` carries the gateway's code and status,
   with `IsNotFound`/`IsConflict` covering both APIs' vocabularies —
   `XAdminUserNotFound` and `NoSuchBucket` mean the same thing to a caller.
+  A bare 404 without a gateway code is never "not found": a proxy or an
+  unmounted admin endpoint produces one, and treating it as absence would
+  drop resources from state.
 - **A non-XML error body stays readable.** A proxy answering with HTML must not
   turn into a "malformed XML" complaint that points at the wrong component.
 - **Bucket sub-resources share one client shape** (`s3.go`): path-style
