@@ -103,8 +103,8 @@ rotation, so changing `access_key` replaces the account. `secret_key` on its own
 is an in-place update.
 
 **Changing a bucket's owner discards its ACL and policy.** The gateway applies a
-fresh default for the new owner rather than migrating the old one. Since `name`
-forces replacement, every in-place update of a bucket carries this.
+fresh default for the new owner rather than migrating the old one. Tags are
+not affected, and a tag-only update does not touch ownership.
 
 **`list-users` returns secret keys.** That is what lets this provider detect a
 key changed outside Terraform — and it is also why the credentials it uses are
