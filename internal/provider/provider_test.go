@@ -884,3 +884,61 @@ resource "versitygw_bucket_website_configuration" "test" {
 		},
 	})
 }
+
+func TestAccSingleDataSources(t *testing.T) {
+	base := `
+resource "versitygw_user" "one" {
+  access_key = "acc-single-one"
+  secret_key = "singleonesecret"
+  role       = "userplus"
+  user_id    = 1234
+}
+
+resource "versitygw_bucket" "test" {
+  name  = "acc-single"
+  owner = versitygw_user.one.access_key
+  tags  = { team = "platform" }
+}
+`
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: base + `
+data "versitygw_user" "one" {
+  access_key = versitygw_user.one.access_key
+}
+
+data "versitygw_bucket" "test" {
+  name       = versitygw_bucket.test.name
+  depends_on = [versitygw_bucket.test]
+}
+`,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("data.versitygw_user.one", "secret_key", "singleonesecret"),
+					resource.TestCheckResourceAttr("data.versitygw_user.one", "role", "userplus"),
+					resource.TestCheckResourceAttr("data.versitygw_user.one", "user_id", "1234"),
+					resource.TestCheckResourceAttr("data.versitygw_bucket.test", "owner", "acc-single-one"),
+					resource.TestCheckResourceAttr("data.versitygw_bucket.test", "tags.team", "platform"),
+				),
+			},
+			{
+				Config: base + `
+data "versitygw_user" "missing" {
+  access_key = "acc-single-nobody"
+}
+`,
+				ExpectError: regexp.MustCompile(`Account does not exist`),
+			},
+			{
+				Config: base + `
+data "versitygw_bucket" "missing" {
+  name = "acc-single-nowhere"
+}
+`,
+				ExpectError: regexp.MustCompile(`Bucket does not exist`),
+			},
+		},
+	})
+}

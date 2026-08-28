@@ -74,6 +74,8 @@ resource "versitygw_bucket" "artifacts" {
 
 | Data source | Description |
 |---|---|
+| [`versitygw_user`](docs/data-sources/user.md) | One account by access key ID; missing is an error |
+| [`versitygw_bucket`](docs/data-sources/bucket.md) | One bucket by name, with owner and tags; missing is an error |
 | [`versitygw_users`](docs/data-sources/users.md) | Every account on the gateway |
 | [`versitygw_buckets`](docs/data-sources/buckets.md) | Every bucket with its owner |
 

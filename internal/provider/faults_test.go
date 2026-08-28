@@ -943,3 +943,22 @@ func TestFaultWebsite(t *testing.T) {
 		recover(g),
 	)
 }
+
+func TestFaultSingleDataSources(t *testing.T) {
+	g := newFakeGateway(t)
+	g.fail("PATCH /list-users", 500, "InternalError")
+	faultCase(t, expectError(`data "versitygw_user" "one" { access_key = "x" }`, `Cannot read the account`))
+
+	g = newFakeGateway(t)
+	g.fail("PATCH /list-buckets", 500, "InternalError")
+	faultCase(t, expectError(`data "versitygw_bucket" "one" { name = "fault-bucket" }`, `Cannot read the bucket`))
+
+	g = newFakeGateway(t)
+	g.fail("GET /fault-bucket?tagging", 500, "InternalError")
+	faultCase(t, expectError(faultBucket+`
+data "versitygw_bucket" "one" {
+  name       = versitygw_bucket.test.name
+  depends_on = [versitygw_bucket.test]
+}
+`, `Cannot read the bucket tags`), recover(g))
+}

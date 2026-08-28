@@ -176,6 +176,8 @@ func (p *versitygwProvider) DataSources(_ context.Context) []func() datasource.D
 	return []func() datasource.DataSource{
 		NewUsersDataSource,
 		NewBucketsDataSource,
+		NewUserDataSource,
+		NewBucketDataSource,
 	}
 }
 
