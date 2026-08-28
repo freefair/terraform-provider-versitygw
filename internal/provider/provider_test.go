@@ -264,3 +264,36 @@ resource "versitygw_bucket_policy" "test" {
 }
 `, strings.Join(quoted, ", "))
 }
+
+func TestAccDataSources(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccBucketConfig("acc-owner-one") + `
+data "versitygw_users" "all" {
+  depends_on = [versitygw_user.one, versitygw_user.two]
+}
+
+data "versitygw_buckets" "all" {
+  depends_on = [versitygw_bucket.test]
+}
+`,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					// The listing carries every account with its secret; the
+					// resources created above must be among them.
+					resource.TestCheckTypeSetElemNestedAttrs("data.versitygw_users.all", "users.*", map[string]string{
+						"access_key": "acc-owner-one",
+						"secret_key": "ownersecretone",
+						"role":       "user",
+					}),
+					resource.TestCheckTypeSetElemNestedAttrs("data.versitygw_buckets.all", "buckets.*", map[string]string{
+						"name":  "acc-bucket",
+						"owner": "acc-owner-one",
+					}),
+				),
+			},
+		},
+	})
+}
