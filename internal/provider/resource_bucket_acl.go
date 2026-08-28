@@ -246,11 +246,21 @@ func (r *bucketACLResource) put(ctx context.Context, plan bucketACLModel, diags 
 		} else {
 			grants := make([]client.Grant, 0, len(plan.AccessControlPolicy.Grants))
 			for _, g := range plan.AccessControlPolicy.Grants {
-				grants = append(grants, client.Grant{
+				grant := client.Grant{
 					Type:       g.Grantee.Type.ValueString(),
 					ID:         g.Grantee.ID.ValueString(),
 					Permission: g.Permission.ValueString(),
-				})
+				}
+				// The gateway carries this grant on every bucket and would
+				// duplicate it; Read hides it, so a configured copy could
+				// never converge. Refuse it here, where the owner is known.
+				if grant.ID == current.Owner && grant.Permission == "FULL_CONTROL" {
+					diags.AddAttributeError(path.Root("access_control_policy"), "Owner grant is implicit",
+						fmt.Sprintf("The bucket owner %q always holds FULL_CONTROL; the gateway adds that grant "+
+							"itself. Remove it from access_control_policy.", current.Owner))
+					return false
+				}
+				grants = append(grants, grant)
 			}
 			err = r.client.PutBucketACL(ctx, bucket, current.Owner, grants)
 		}

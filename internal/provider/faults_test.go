@@ -509,6 +509,25 @@ resource "versitygw_bucket_acl" "test" {
 }
 `, `non-existent account`))
 
+	// The owner's FULL_CONTROL is implicit; a configured copy would be
+	// duplicated by the gateway and could never converge.
+	newFakeGateway(t)
+	faultCase(t, expectError(faultOwnershipWriter+`
+resource "versitygw_bucket_acl" "test" {
+  bucket = versitygw_bucket.test.name
+  access_control_policy {
+    grant {
+      permission = "FULL_CONTROL"
+      grantee {
+        type = "CanonicalUser"
+        id   = versitygw_user.test.access_key
+      }
+    }
+  }
+  depends_on = [versitygw_bucket_ownership_controls.test]
+}
+`, `Owner grant is implicit`))
+
 	g := newFakeGateway(t)
 	g.fail("PUT /fault-bucket?acl", 404, "NoSuchBucket")
 	faultCase(t, expectError(faultACLCanned, `Bucket does not exist`), recover(g))

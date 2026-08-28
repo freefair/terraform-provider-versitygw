@@ -70,7 +70,8 @@ every ACL write answers `AccessControlListNotSupported`. Put a
 - **The owner is not configured.** The gateway accepts only the bucket's
   actual owner in the document; the provider reads it and fills it in.
 - **The owner's `FULL_CONTROL` grant is implicit.** The gateway carries it on
-  every bucket and would duplicate it if sent, so it is not part of `grant`.
+  every bucket and would duplicate it if sent, so it is not part of `grant`;
+  listing it is refused at apply time.
 - **Public access exists only through the canned ACLs.** The gateway
   resolves every explicit grantee as an account and answers an internal
   error for a group in any spelling. `grant` therefore takes `CanonicalUser`

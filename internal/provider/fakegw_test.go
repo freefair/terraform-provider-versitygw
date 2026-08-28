@@ -409,9 +409,8 @@ func (g *fakeGateway) handle(w http.ResponseWriter, r *http.Request) {
 						s3Error(w, 500, "InternalError")
 						return
 					}
-					if gr.Grantee.Type == "CanonicalUser" && gr.Grantee.ID == owner && gr.Permission == "FULL_CONTROL" {
-						continue
-					}
+					// The real gateway keeps a submitted owner grant next to
+					// its implicit one — duplicated on read. Mirrored.
 					grants = append(grants, fakeGrant{gr.Grantee.Type, gr.Grantee.ID, gr.Permission})
 				}
 				g.acls[name] = grants
