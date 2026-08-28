@@ -86,6 +86,17 @@ latest and OpenTofu latest. A red compat run means: bump the pin in a deliberate
 commit and re-check every fact above. Dependabot covers Go modules and Actions;
 it cannot see the image pin.
 
+## Workflow: finishing a task
+
+- **Codex review before the PR.** When a task is complete, run a review through
+  the Codex MCP (`mcp__codex__codex`, reasoning effort `high`) on the diff and
+  act on its findings before opening the pull request.
+- **Self-merge is allowed** when the acceptance tests against a real
+  `versitygw` in Docker are green and coverage is around 100 %. Reasonable
+  beats absolute: do what is needed, but a solid 90 % is better than a
+  contrived 100 %. Anything below that, or a red run, waits for Dennis.
+- Work on a feature branch; `main` is behind a merge queue.
+
 ## Release
 
 Tag with `vX.Y.Z` to trigger GoReleaser via GitHub Actions. Requires the
