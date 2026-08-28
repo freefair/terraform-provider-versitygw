@@ -3,7 +3,6 @@ package client
 import (
 	"encoding/xml"
 	"fmt"
-	"net/http"
 )
 
 // Role values the gateway accepts. `user` cannot create buckets and sees only
@@ -74,12 +73,16 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("%s: %s (HTTP %d)", e.Code, e.Message, e.StatusCode)
 }
 
-// IsNotFound reports whether the object the request addressed does not exist.
+// IsNotFound reports whether the gateway said the object the request
+// addressed does not exist.
 //
-// The codes are listed because the APIs disagree: the admin API answers
-// XAdminUserNotFound, the S3 API answers NoSuchBucket, and each bucket
-// sub-resource has a code of its own (s3err/s3err.go upstream). A 404 alone
-// is not enough to go by — a wrong endpoint path produces one too.
+// Only the gateway's own codes count: the admin API answers
+// XAdminUserNotFound, the S3 API NoSuchBucket, and each bucket sub-resource
+// has a code of its own (s3err/s3err.go upstream). A bare 404 is deliberately
+// NOT absence — a proxy, or an admin endpoint that is not mounted where the
+// provider looks, produces one too, and treating it as "gone" would drop the
+// resource from state or pass a failed delete as success. Those cases must
+// reach the user as errors.
 func (e *APIError) IsNotFound() bool {
 	switch e.Code {
 	case "XAdminUserNotFound", "NoSuchBucket", "NoSuchKey",
@@ -87,7 +90,7 @@ func (e *APIError) IsNotFound() bool {
 		"NoSuchTagSet", "ObjectLockConfigurationNotFoundError", "OwnershipControlsNotFoundError":
 		return true
 	}
-	return e.StatusCode == http.StatusNotFound
+	return false
 }
 
 // IsNotImplemented reports whether the gateway refuses the operation as
