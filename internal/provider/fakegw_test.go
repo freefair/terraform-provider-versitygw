@@ -97,6 +97,15 @@ func (g *fakeGateway) forgetBucket(name string) {
 	delete(g.locks, name)
 }
 
+// hasBucket reports whether the bucket still exists — the check that proves
+// a state-only destroy sent nothing the gateway would act on.
+func (g *fakeGateway) hasBucket(name string) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	_, ok := g.buckets[name]
+	return ok
+}
+
 // forgetLock drops the lock document, which the real gateway cannot do —
 // but a test needs a way to say "the configuration is gone".
 func (g *fakeGateway) forgetLock(name string) {
@@ -239,7 +248,7 @@ func (g *fakeGateway) handle(w http.ResponseWriter, r *http.Request) {
 			s3Error(w, 405, "MethodNotAllowed")
 		}
 
-	case r.URL.Query().Has("versioning"):
+	case r.URL.Query().Has("versioning") && r.Method != http.MethodDelete:
 		name := strings.TrimPrefix(r.URL.Path, "/")
 		if _, ok := g.buckets[name]; !ok {
 			s3Error(w, 404, "NoSuchBucket")
@@ -266,7 +275,7 @@ func (g *fakeGateway) handle(w http.ResponseWriter, r *http.Request) {
 			s3Error(w, 405, "MethodNotAllowed")
 		}
 
-	case r.URL.Query().Has("object-lock"):
+	case r.URL.Query().Has("object-lock") && r.Method != http.MethodDelete:
 		name := strings.TrimPrefix(r.URL.Path, "/")
 		if _, ok := g.buckets[name]; !ok {
 			s3Error(w, 404, "NoSuchBucket")
@@ -298,7 +307,9 @@ func (g *fakeGateway) handle(w http.ResponseWriter, r *http.Request) {
 
 	case r.Method == http.MethodDelete:
 		// The real gateway routes a DELETE with a sub-resource it does not
-		// know here as well — and deletes the bucket. Mirrored on purpose.
+		// know (?versioning, ?object-lock) here as well — and deletes the
+		// bucket. Mirrored on purpose, so a provider that ever sends one
+		// loses the bucket in the test and not in production.
 		name := strings.TrimPrefix(r.URL.Path, "/")
 		if _, ok := g.buckets[name]; !ok {
 			s3Error(w, 404, "NoSuchBucket")

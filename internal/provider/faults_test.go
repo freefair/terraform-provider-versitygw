@@ -1,10 +1,12 @@
 package provider_test
 
 import (
+	"fmt"
 	"regexp"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/terraform"
 )
 
 // These run under TF_ACC like the real acceptance tests — they drive the
@@ -287,6 +289,53 @@ func TestFaultVersioning(t *testing.T) {
 		// configuration and the resource leaves state.
 		resource.TestStep{PreConfig: func() { g.clearFaults(); g.forgetBucket("fault-bucket") },
 			Config: faultVersioning, PlanOnly: true, ExpectNonEmptyPlan: true},
+		recover(g),
+	)
+}
+
+func TestFaultVersioningConfigValidation(t *testing.T) {
+	newFakeGateway(t)
+	faultCase(t, expectError(faultBucket+`
+resource "versitygw_bucket_versioning" "test" {
+  bucket = versitygw_bucket.test.name
+}
+`, `Missing versioning_configuration`))
+}
+
+func TestFaultObjectLockConfigValidation(t *testing.T) {
+	lock := func(body string) string {
+		return faultVersioning + `
+resource "versitygw_bucket_object_lock_configuration" "test" {
+  bucket = versitygw_bucket.test.name
+` + body + `
+}
+`
+	}
+	cases := map[string]string{
+		`rule {}`: `Empty rule`,
+		`rule { default_retention { days = 1 } }`:                                     `Missing retention mode`,
+		`rule { default_retention { mode = "GOVERNANCE" } }`:                          `exactly one of days and years`,
+		"rule { default_retention { mode = \"GOVERNANCE\"\n days = 1\n years = 1 } }": `exactly one of days and years`,
+	}
+	for body, pattern := range cases {
+		newFakeGateway(t)
+		faultCase(t, expectError(lock(body), pattern))
+	}
+}
+
+// Destroying versioning or object lock must not send anything: the gateway
+// would delete the bucket. The fake mirrors that, so the bucket surviving
+// the destroy is the proof.
+func TestFaultStateOnlyDestroyKeepsTheBucket(t *testing.T) {
+	g := newFakeGateway(t)
+	faultCase(t,
+		resource.TestStep{Config: faultLock},
+		resource.TestStep{Config: faultBucket, Check: func(*terraform.State) error {
+			if !g.hasBucket("fault-bucket") {
+				return fmt.Errorf("destroying versioning/object lock deleted the bucket")
+			}
+			return nil
+		}},
 		recover(g),
 	)
 }

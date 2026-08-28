@@ -17,9 +17,10 @@ import (
 )
 
 var (
-	_ resource.Resource                = &bucketVersioningResource{}
-	_ resource.ResourceWithConfigure   = &bucketVersioningResource{}
-	_ resource.ResourceWithImportState = &bucketVersioningResource{}
+	_ resource.Resource                   = &bucketVersioningResource{}
+	_ resource.ResourceWithConfigure      = &bucketVersioningResource{}
+	_ resource.ResourceWithImportState    = &bucketVersioningResource{}
+	_ resource.ResourceWithValidateConfig = &bucketVersioningResource{}
 )
 
 type bucketVersioningResource struct {
@@ -79,6 +80,21 @@ func (r *bucketVersioningResource) Schema(_ context.Context, _ resource.SchemaRe
 				},
 			},
 		},
+	}
+}
+
+// ValidateConfig requires the block. A SingleNestedBlock cannot be marked
+// required in the schema, and a resource without a status has nothing to
+// send.
+func (r *bucketVersioningResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+	var cfg bucketVersioningModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &cfg)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if cfg.VersioningConfiguration == nil {
+		resp.Diagnostics.AddAttributeError(path.Root("versioning_configuration"), "Missing versioning_configuration",
+			"Add a versioning_configuration block with status = \"Enabled\" or \"Suspended\".")
 	}
 }
 

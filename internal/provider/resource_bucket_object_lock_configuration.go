@@ -121,7 +121,14 @@ func (r *bucketObjectLockResource) Schema(_ context.Context, _ resource.SchemaRe
 func (r *bucketObjectLockResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
 	var cfg bucketObjectLockModel
 	resp.Diagnostics.Append(req.Config.Get(ctx, &cfg)...)
-	if resp.Diagnostics.HasError() || cfg.Rule == nil || cfg.Rule.DefaultRetention == nil {
+	if resp.Diagnostics.HasError() || cfg.Rule == nil {
+		return
+	}
+	if cfg.Rule.DefaultRetention == nil {
+		// The gateway would store "no rule" and Read would report rule =
+		// null — a perpetual diff against the empty block in config.
+		resp.Diagnostics.AddAttributeError(path.Root("rule"), "Empty rule",
+			"A rule block needs a default_retention; leave rule out entirely for a lock without one.")
 		return
 	}
 	ret := cfg.Rule.DefaultRetention
@@ -129,6 +136,11 @@ func (r *bucketObjectLockResource) ValidateConfig(ctx context.Context, req resou
 	if ret.Mode.IsNull() {
 		resp.Diagnostics.AddAttributeError(base.AtName("mode"), "Missing retention mode",
 			"default_retention needs a mode: GOVERNANCE or COMPLIANCE.")
+	}
+	// Unknown values are decided at apply time; only what is known now can
+	// be judged.
+	if ret.Days.IsUnknown() || ret.Years.IsUnknown() {
+		return
 	}
 	hasDays, hasYears := !ret.Days.IsNull(), !ret.Years.IsNull()
 	if hasDays == hasYears {
