@@ -19,8 +19,9 @@ import (
 // with versitygw. Start one and export the same variables the provider reads:
 //
 //	docker run --rm -d -p 7070:7070 --name versitygw-acc \
+//	  -v vgw-versions:/tmp/vgw-versions \
 //	  -e ROOT_ACCESS_KEY_ID=testaccess -e ROOT_SECRET_ACCESS_KEY=testsecret \
-//	  versity/versitygw:v1.7.0 --iam-dir /tmp/vgw posix /tmp/vgw
+//	  versity/versitygw:v1.7.0 --iam-dir /tmp/vgw posix /tmp/vgw --versioning-dir /tmp/vgw-versions
 //
 //	export TF_ACC=1
 //	export VERSITYGW_ENDPOINT=http://127.0.0.1:7070
@@ -31,7 +32,8 @@ import (
 // where the admin routes live on the S3 listener, and it exercises the
 // provider's endpoint fallback. --iam-dir is not optional: without an IAM
 // service the gateway runs in single-account mode and answers every account
-// route with 501 XAdminMethodNotSupported.
+// route with 501 XAdminMethodNotSupported. The versioning directory must
+// exist before the gateway starts; the named volume takes care of that.
 
 var testAccProtoV6ProviderFactories = map[string]func() (tfprotov6.ProviderServer, error){
 	"versitygw": providerserver.NewProtocol6WithError(provider.New("test")()),
@@ -296,4 +298,139 @@ data "versitygw_buckets" "all" {
 			},
 		},
 	})
+}
+
+func TestAccBucketVersioningAndObjectLock(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccVersioningConfig("Enabled", "-"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("versitygw_bucket_versioning.test", "bucket", "acc-versioned"),
+					resource.TestCheckResourceAttr("versitygw_bucket_versioning.test", "versioning_configuration.status", "Enabled"),
+				),
+			},
+			{
+				Config: testAccVersioningConfig("Suspended", "-"),
+				Check:  resource.TestCheckResourceAttr("versitygw_bucket_versioning.test", "versioning_configuration.status", "Suspended"),
+			},
+			{
+				ResourceName:                         "versitygw_bucket_versioning.test",
+				ImportState:                          true,
+				ImportStateId:                        "acc-versioned",
+				ImportStateVerify:                    true,
+				ImportStateVerifyIdentifierAttribute: "bucket",
+			},
+			{
+				// Lock with a default retention on the (re-enabled) bucket.
+				Config: testAccVersioningConfig("Enabled", `
+  rule {
+    default_retention {
+      mode = "GOVERNANCE"
+      days = 1
+    }
+  }`),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("versitygw_bucket_object_lock_configuration.test", "object_lock_enabled", "Enabled"),
+					resource.TestCheckResourceAttr("versitygw_bucket_object_lock_configuration.test", "rule.default_retention.mode", "GOVERNANCE"),
+					resource.TestCheckResourceAttr("versitygw_bucket_object_lock_configuration.test", "rule.default_retention.days", "1"),
+				),
+			},
+			{
+				Config: testAccVersioningConfig("Enabled", `
+  rule {
+    default_retention {
+      mode  = "COMPLIANCE"
+      years = 1
+    }
+  }`),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("versitygw_bucket_object_lock_configuration.test", "rule.default_retention.mode", "COMPLIANCE"),
+					resource.TestCheckResourceAttr("versitygw_bucket_object_lock_configuration.test", "rule.default_retention.years", "1"),
+					resource.TestCheckNoResourceAttr("versitygw_bucket_object_lock_configuration.test", "rule.default_retention.days"),
+				),
+			},
+			{
+				ResourceName:                         "versitygw_bucket_object_lock_configuration.test",
+				ImportState:                          true,
+				ImportStateId:                        "acc-versioned",
+				ImportStateVerify:                    true,
+				ImportStateVerifyIdentifierAttribute: "bucket",
+			},
+			{
+				// Dropping the rule keeps the lock and clears the retention.
+				Config: testAccVersioningConfig("Enabled", ""),
+				Check:  resource.TestCheckNoResourceAttr("versitygw_bucket_object_lock_configuration.test", "rule.default_retention.mode"),
+			},
+			{
+				// The gateway refuses to suspend versioning while a lock
+				// configuration is present; that refusal reaches the user.
+				Config:      testAccVersioningConfig("Suspended", ""),
+				ExpectError: regexp.MustCompile(`InvalidBucketState`),
+			},
+		},
+	})
+}
+
+func TestAccObjectLockNeedsVersioning(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: `
+resource "versitygw_user" "owner" {
+  access_key = "acc-lock-owner"
+  secret_key = "lockownersecret"
+}
+
+resource "versitygw_bucket" "test" {
+  name  = "acc-unversioned"
+  owner = versitygw_user.owner.access_key
+}
+
+resource "versitygw_bucket_object_lock_configuration" "test" {
+  bucket = versitygw_bucket.test.name
+}
+`,
+				ExpectError: regexp.MustCompile(`Versioning must be enabled first`),
+			},
+		},
+	})
+}
+
+// testAccVersioningConfig renders a bucket with versioning and, unless
+// lockBody is "-", an object lock configuration whose body is lockBody — an
+// empty string gives a lock without a rule.
+func testAccVersioningConfig(status, lockBody string) string {
+	cfg := fmt.Sprintf(`
+resource "versitygw_user" "owner" {
+  access_key = "acc-versioning-owner"
+  secret_key = "versioningownersecret"
+}
+
+resource "versitygw_bucket" "test" {
+  name  = "acc-versioned"
+  owner = versitygw_user.owner.access_key
+}
+
+resource "versitygw_bucket_versioning" "test" {
+  bucket = versitygw_bucket.test.name
+  versioning_configuration {
+    status = %q
+  }
+}
+`, status)
+	if lockBody != "-" {
+		cfg += fmt.Sprintf(`
+resource "versitygw_bucket_object_lock_configuration" "test" {
+  bucket = versitygw_bucket.test.name
+%s
+  depends_on = [versitygw_bucket_versioning.test]
+}
+`, lockBody)
+	}
+	return cfg
 }
