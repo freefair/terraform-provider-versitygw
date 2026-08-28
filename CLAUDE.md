@@ -84,7 +84,7 @@ it cannot see the image pin.
 ## Workflow: finishing a task
 
 - **Codex review before the PR.** When a task is complete, run a review through
-  the Codex MCP (`mcp__codex__codex`, reasoning effort `high`) on the diff and
+  the Codex MCP (`mcp__codex__codex`, model `sol`, reasoning effort `high`) on the diff and
   act on its findings before opening the pull request.
 - **Self-merge is allowed** when the acceptance tests against a real
   `versitygw` in Docker are green and coverage is around 100 %. Reasonable
