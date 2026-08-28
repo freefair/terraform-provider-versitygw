@@ -27,14 +27,25 @@ func (c *Client) putBucketSubresource(ctx context.Context, bucket, subresource s
 	return err
 }
 
+// isAbsent reports whether err is the gateway saying this sub-resource, or
+// the bucket it belongs to, does not exist. Only those two codes count: a
+// bare 404 from a proxy or a wrong path must not remove a resource from
+// state or turn a failed delete into a success.
+func isAbsent(err error, absentCode string) bool {
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	return apiErr.Code == absentCode || apiErr.Code == "NoSuchBucket"
+}
+
 // getBucketSubresource reads a sub-resource. It returns (nil, nil) when the
-// gateway says the sub-resource does not exist — the bucket's own absence
-// included — so callers keep the convention GetUser and GetBucket set.
-func (c *Client) getBucketSubresource(ctx context.Context, bucket, subresource string) ([]byte, error) {
+// gateway answers absentCode or NoSuchBucket, so callers keep the convention
+// GetUser and GetBucket set.
+func (c *Client) getBucketSubresource(ctx context.Context, bucket, subresource, absentCode string) ([]byte, error) {
 	payload, err := c.do(ctx, http.MethodGet, c.s3URL(bucket, subresource), nil, nil)
 	if err != nil {
-		var apiErr *APIError
-		if errors.As(err, &apiErr) && apiErr.IsNotFound() {
+		if isAbsent(err, absentCode) {
 			return nil, nil
 		}
 		return nil, err
@@ -44,10 +55,9 @@ func (c *Client) getBucketSubresource(ctx context.Context, bucket, subresource s
 
 // deleteBucketSubresource removes a sub-resource. Absence is not an error:
 // a destroy that finds nothing to remove has nothing left to do.
-func (c *Client) deleteBucketSubresource(ctx context.Context, bucket, subresource string) error {
+func (c *Client) deleteBucketSubresource(ctx context.Context, bucket, subresource, absentCode string) error {
 	_, err := c.do(ctx, http.MethodDelete, c.s3URL(bucket, subresource), nil, nil)
-	var apiErr *APIError
-	if errors.As(err, &apiErr) && apiErr.IsNotFound() {
+	if isAbsent(err, absentCode) {
 		return nil
 	}
 	return err
@@ -63,10 +73,10 @@ func (c *Client) PutBucketPolicy(ctx context.Context, bucket string, policy []by
 // GetBucketPolicy returns a bucket's policy document, or nil when the bucket
 // has none (or does not exist).
 func (c *Client) GetBucketPolicy(ctx context.Context, bucket string) ([]byte, error) {
-	return c.getBucketSubresource(ctx, bucket, "policy")
+	return c.getBucketSubresource(ctx, bucket, "policy", "NoSuchBucketPolicy")
 }
 
 // DeleteBucketPolicy removes a bucket's policy.
 func (c *Client) DeleteBucketPolicy(ctx context.Context, bucket string) error {
-	return c.deleteBucketSubresource(ctx, bucket, "policy")
+	return c.deleteBucketSubresource(ctx, bucket, "policy", "NoSuchBucketPolicy")
 }

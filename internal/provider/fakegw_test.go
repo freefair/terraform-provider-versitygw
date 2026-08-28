@@ -214,6 +214,11 @@ func (g *fakeGateway) handle(w http.ResponseWriter, r *http.Request) {
 		case http.MethodDelete:
 			delete(g.policies, name)
 			w.WriteHeader(204)
+		default:
+			// An implicit 200 here would hide a provider sending the wrong
+			// verb; the real gateway answers 405.
+			g.t.Errorf("fake gateway: %s on ?policy", r.Method)
+			s3Error(w, 405, "MethodNotAllowed")
 		}
 
 	case r.Method == http.MethodDelete:

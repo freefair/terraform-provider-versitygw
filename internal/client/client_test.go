@@ -377,13 +377,28 @@ func TestGetBucketSubresourceReturnsNilWhenAbsent(t *testing.T) {
 		})
 	}
 
-	// Anything that is not "absent" is an error the caller must see.
-	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusForbidden)
-		_, _ = w.Write([]byte(`<Error><Code>AccessDenied</Code></Error>`))
-	})
-	if _, err := c.GetBucketPolicy(context.Background(), "b"); err == nil {
-		t.Error("AccessDenied was swallowed as absence")
+	// Anything that is not "absent" is an error the caller must see — a
+	// bare 404 from a proxy or a wrong path especially, because treating it
+	// as absence would drop the resource from state.
+	for name, body := range map[string]string{
+		"access denied":   `<Error><Code>AccessDenied</Code></Error>`,
+		"bare 404":        `<html>not found</html>`,
+		"other not-found": `<Error><Code>NoSuchKey</Code></Error>`,
+	} {
+		status := http.StatusNotFound
+		if name == "access denied" {
+			status = http.StatusForbidden
+		}
+		c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(status)
+			_, _ = w.Write([]byte(body))
+		})
+		if _, err := c.GetBucketPolicy(context.Background(), "b"); err == nil {
+			t.Errorf("%s was swallowed as absence", name)
+		}
+		if err := c.DeleteBucketPolicy(context.Background(), "b"); err == nil {
+			t.Errorf("delete: %s was swallowed as success", name)
+		}
 	}
 }
 
