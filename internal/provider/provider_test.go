@@ -630,11 +630,19 @@ resource "versitygw_bucket" "test" {
 				),
 			},
 			{
-				// Change one, drop one; the owner change in the same step
-				// must not touch the tags.
-				Config: cfg("versitygw_user.two.access_key", `tags = { team = "data" }`),
+				// Owner change alone: no tagging call is made, so the
+				// refresh after this step proves the gateway kept the tags.
+				Config: cfg("versitygw_user.two.access_key", `tags = { team = "platform", cost = "ci" }`),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("versitygw_bucket.test", "owner", "acc-tags-two"),
+					resource.TestCheckResourceAttr("versitygw_bucket.test", "tags.%", "2"),
+					resource.TestCheckResourceAttr("versitygw_bucket.test", "tags.cost", "ci"),
+				),
+			},
+			{
+				// Change one, drop one.
+				Config: cfg("versitygw_user.two.access_key", `tags = { team = "data" }`),
+				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("versitygw_bucket.test", "tags.%", "1"),
 					resource.TestCheckResourceAttr("versitygw_bucket.test", "tags.team", "data"),
 				),
