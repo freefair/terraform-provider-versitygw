@@ -796,3 +796,58 @@ func TestBucketTaggingRoundTrip(t *testing.T) {
 		t.Errorf("deleting absent tags: %v", err)
 	}
 }
+
+func TestBucketCORSRoundTrip(t *testing.T) {
+	var sent string
+	stored := `<CORSConfiguration><CORSRule><AllowedMethod>PUT</AllowedMethod><AllowedMethod>POST</AllowedMethod><AllowedHeader>*</AllowedHeader><ExposeHeader>ETag</ExposeHeader><AllowedOrigin>https://app.example.com</AllowedOrigin><ID>a</ID><MaxAgeSeconds>3000</MaxAgeSeconds></CORSRule><CORSRule><AllowedMethod>GET</AllowedMethod><AllowedOrigin>*</AllowedOrigin></CORSRule></CORSConfiguration>`
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPut:
+			b, _ := io.ReadAll(r.Body)
+			sent = string(b)
+		case http.MethodGet:
+			_, _ = io.WriteString(w, stored)
+		case http.MethodDelete:
+			w.WriteHeader(http.StatusNoContent)
+		}
+	})
+	age := int64(3000)
+	err := c.PutBucketCORS(context.Background(), "b", []CORSRule{
+		{ID: "a", AllowedHeaders: []string{"*"}, AllowedMethods: []string{"PUT", "POST"},
+			AllowedOrigins: []string{"https://app.example.com"}, ExposeHeaders: []string{"ETag"}, MaxAgeSeconds: &age},
+		{AllowedMethods: []string{"GET"}, AllowedOrigins: []string{"*"}},
+	})
+	if err != nil {
+		t.Fatalf("PutBucketCORS: %v", err)
+	}
+	want := `<CORSConfiguration><CORSRule><ID>a</ID><AllowedHeader>*</AllowedHeader><AllowedMethod>PUT</AllowedMethod><AllowedMethod>POST</AllowedMethod><AllowedOrigin>https://app.example.com</AllowedOrigin><ExposeHeader>ETag</ExposeHeader><MaxAgeSeconds>3000</MaxAgeSeconds></CORSRule><CORSRule><AllowedMethod>GET</AllowedMethod><AllowedOrigin>*</AllowedOrigin></CORSRule></CORSConfiguration>`
+	if sent != want {
+		t.Errorf("body = %s", sent)
+	}
+	rules, err := c.GetBucketCORS(context.Background(), "b")
+	if err != nil || len(rules) != 2 {
+		t.Fatalf("Get = %v, %v", rules, err)
+	}
+	if rules[0].ID != "a" || rules[0].MaxAgeSeconds == nil || *rules[0].MaxAgeSeconds != 3000 ||
+		len(rules[0].AllowedMethods) != 2 || rules[1].MaxAgeSeconds != nil || rules[1].AllowedOrigins[0] != "*" {
+		t.Errorf("rules = %+v", rules)
+	}
+	stored = `<<garbage`
+	if _, err := c.GetBucketCORS(context.Background(), "b"); err == nil {
+		t.Error("garbage accepted")
+	}
+	if err := c.DeleteBucketCORS(context.Background(), "b"); err != nil {
+		t.Errorf("delete: %v", err)
+	}
+
+	c, _ = newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`<Error><Code>NoSuchCORSConfiguration</Code></Error>`))
+	})
+	if rules, err := c.GetBucketCORS(context.Background(), "b"); err != nil || rules != nil {
+		t.Errorf("absent = %v, %v; want nil, nil", rules, err)
+	}
+	if err := c.DeleteBucketCORS(context.Background(), "b"); err != nil {
+		t.Errorf("deleting absent cors: %v", err)
+	}
+}

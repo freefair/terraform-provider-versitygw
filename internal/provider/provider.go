@@ -167,6 +167,7 @@ func (p *versitygwProvider) Resources(_ context.Context) []func() resource.Resou
 		NewBucketObjectLockResource,
 		NewBucketOwnershipResource,
 		NewBucketACLResource,
+		NewBucketCORSResource,
 	}
 }
 

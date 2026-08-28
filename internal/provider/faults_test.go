@@ -651,3 +651,106 @@ resource "versitygw_bucket" "test" {
 		recover(g),
 	)
 }
+
+const faultCORS = faultBucket + `
+resource "versitygw_bucket_cors_configuration" "test" {
+  bucket = versitygw_bucket.test.name
+  cors_rule {
+    allowed_methods = ["GET"]
+    allowed_origins = ["*"]
+  }
+}
+`
+
+const faultCORSChanged = faultBucket + `
+resource "versitygw_bucket_cors_configuration" "test" {
+  bucket = versitygw_bucket.test.name
+  cors_rule {
+    id              = "x"
+    allowed_headers = ["*"]
+    allowed_methods = ["PUT"]
+    allowed_origins = ["https://a.example"]
+    expose_headers  = ["ETag"]
+    max_age_seconds = 10
+  }
+}
+`
+
+func TestFaultCORSConfigValidation(t *testing.T) {
+	newFakeGateway(t)
+	cases := map[string]string{
+		`Missing cors_rule`: `
+resource "versitygw_bucket_cors_configuration" "test" {
+  bucket = versitygw_bucket.test.name
+}
+`,
+		`value must be one of`: `
+resource "versitygw_bucket_cors_configuration" "test" {
+  bucket = versitygw_bucket.test.name
+  cors_rule {
+    allowed_methods = ["PATCH"]
+    allowed_origins = ["*"]
+  }
+}
+`,
+		`Null List Value`: `
+resource "versitygw_bucket_cors_configuration" "test" {
+  bucket = versitygw_bucket.test.name
+  cors_rule {
+    allowed_methods = ["GET"]
+    allowed_origins = [null]
+  }
+}
+`,
+		`max_age_seconds value must be between 0 and`: `
+resource "versitygw_bucket_cors_configuration" "test" {
+  bucket = versitygw_bucket.test.name
+  cors_rule {
+    allowed_methods = ["GET"]
+    allowed_origins = ["*"]
+    max_age_seconds = 2147483648
+  }
+}
+`,
+		`list must contain at least 1 elements`: `
+resource "versitygw_bucket_cors_configuration" "test" {
+  bucket = versitygw_bucket.test.name
+  cors_rule {
+    allowed_headers = []
+    allowed_methods = ["GET"]
+    allowed_origins = ["*"]
+  }
+}
+`,
+	}
+	for pattern, cfg := range cases {
+		faultCase(t, expectError(faultBucket+cfg, pattern))
+	}
+}
+
+func TestFaultCORS(t *testing.T) {
+	g := newFakeGateway(t)
+	g.fail("PUT /fault-bucket?cors", 404, "NoSuchBucket")
+	faultCase(t, expectError(faultCORS, `Bucket does not exist`), recover(g))
+
+	g = newFakeGateway(t)
+	g.fail("PUT /fault-bucket?cors", 500, "InternalError")
+	faultCase(t, expectError(faultCORS, `Cannot set the CORS configuration`), recover(g))
+
+	g = newFakeGateway(t)
+	faultCase(t,
+		resource.TestStep{Config: faultCORS},
+		resource.TestStep{PreConfig: func() { g.fail("GET /fault-bucket?cors", 500, "InternalError") },
+			Config: faultCORS, ExpectError: regexp.MustCompile(`Cannot read the CORS configuration`)},
+		resource.TestStep{PreConfig: func() { g.clearFaults(); g.fail("PUT /fault-bucket?cors", 500, "InternalError") },
+			Config: faultCORSChanged, ExpectError: regexp.MustCompile(`Cannot set the CORS configuration`)},
+		resource.TestStep{PreConfig: g.clearFaults, Config: faultCORSChanged,
+			Check: resource.TestCheckResourceAttr("versitygw_bucket_cors_configuration.test", "cors_rule.0.max_age_seconds", "10")},
+		resource.TestStep{PreConfig: func() { g.fail("DELETE /fault-bucket?cors", 500, "InternalError") },
+			Config: faultBucket, ExpectError: regexp.MustCompile(`Cannot delete the CORS configuration`)},
+		// Deleted behind Terraform's back → not-found → gone from state.
+		resource.TestStep{PreConfig: func() { g.clearFaults(); g.forgetCORS("fault-bucket") },
+			Config: faultCORS, PlanOnly: true, ExpectNonEmptyPlan: true},
+		recover(g),
+	)
+}
