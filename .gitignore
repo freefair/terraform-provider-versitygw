@@ -7,3 +7,6 @@ dist/
 .idea/
 .vscode/
 *.swp
+
+# Session journal, local only
+.claude/task-notes/
