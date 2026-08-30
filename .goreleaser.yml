@@ -30,6 +30,12 @@ archives:
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
 
 checksum:
+  # The manifest is checksummed as well as uploaded, as HashiCorp's own
+  # provider template does — the registry validates it against the signed
+  # SHA256SUMS before it trusts the protocol versions inside.
+  extra_files:
+    - glob: terraform-registry-manifest.json
+      name_template: "{{ .ProjectName }}_{{ .Version }}_manifest.json"
   name_template: "{{ .ProjectName }}_{{ .Version }}_SHA256SUMS"
   algorithm: sha256
 
@@ -46,6 +52,13 @@ signs:
 
 release:
   draft: false
+  # The registry reads the provider's protocol version from this file. Without
+  # it as a release asset it assumes 5.0, and this provider speaks only 6.0
+  # (terraform-plugin-framework): a core too old to negotiate would be offered
+  # a provider it cannot talk to.
+  extra_files:
+    - glob: terraform-registry-manifest.json
+      name_template: "{{ .ProjectName }}_{{ .Version }}_manifest.json"
 
 changelog:
   use: github-native
