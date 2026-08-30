@@ -124,12 +124,18 @@ make build
 ### Testing
 
 ```bash
-make test     # unit tests; no gateway needed
-make testacc  # acceptance tests against a real gateway
+make test     # unit tests and fake-gateway tests; no container needed
+make testacc  # everything, including the tests against a real gateway
 ```
 
-Acceptance tests run against a real instance on purpose — a mock would only
-prove the provider agrees with itself, and the wire format belongs to upstream:
+`make test` needs a `terraform` binary but no gateway: besides the unit tests
+it drives the provider through Terraform against an in-process fake that
+mirrors the gateway's measured behaviour, which is where the error branches
+are covered.
+
+The acceptance tests on top of that run against a real instance on purpose — a
+mock would only prove the provider agrees with itself, and the wire format
+belongs to upstream:
 
 ```bash
 # --iam-dir is what turns on the IAM service; without it the gateway runs in

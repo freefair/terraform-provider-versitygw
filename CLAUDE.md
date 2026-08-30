@@ -108,12 +108,26 @@ code without re-checking them breaks things silently.
 
 ```bash
 go build -v .
-go test -v ./...                           # unit tests, no gateway needed
-TF_ACC=1 go test -v -timeout 120m ./...    # acceptance tests, real gateway
+go test -v ./...                           # unit + fake-gateway tests, no gateway
+TF_ACC=1 go test -v -timeout 120m ./...    # everything, incl. a real gateway
 ```
 
-Acceptance tests need a running gateway; see the comment at the top of
-`internal/provider/provider_test.go` for the container invocation.
+Three kinds of test, two commands:
+
+- **Unit tests** (`helpers_test.go`, `internal/client`) — plain Go, always run.
+- **Fake-gateway tests** (`faults_test.go`) — drive Terraform against an
+  in-process `httptest` gateway that mirrors the measured upstream behaviour.
+  They cover the error branches a healthy gateway never takes, need a
+  `terraform` binary but no container, and run in `go test ./...` because
+  `newFakeGateway` sets `TF_ACC` itself. This is the bulk of the coverage.
+- **Acceptance tests** (`provider_test.go`) — the real gateway, so the wire
+  format stays upstream's. They skip unless `TF_ACC` comes from the
+  environment; see the comment at the top of `provider_test.go` for the
+  container invocation.
+
+Do not document the first command as covering nothing but helpers: without
+the `TF_ACC` line in `newFakeGateway` it skips 38 of 40 provider tests and
+reports 1.9 %.
 
 CI: `test.yml` pins `versity/versitygw:v1.7.0` — the version the facts above
 are measured against. `compat.yml` runs weekly against `:latest` with Terraform

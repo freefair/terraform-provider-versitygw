@@ -79,6 +79,14 @@ func newFakeGateway(t *testing.T) *fakeGateway {
 	g.srv = httptest.NewServer(http.HandlerFunc(g.handle))
 	t.Cleanup(g.srv.Close)
 
+	// resource.Test skips unless TF_ACC is set, and it does not care that
+	// this gateway lives in the same process — so the fake sets the flag
+	// itself. Without it `go test ./...` would skip every test here and
+	// report a coverage figure that means nothing. Acceptance tests do not
+	// call this constructor, so they keep skipping until TF_ACC comes from
+	// the environment, which is what keeps `go test ./...` gateway-free.
+	t.Setenv("TF_ACC", "1")
+
 	// The provider reads its configuration from the environment; pointing
 	// it at the fake is a matter of three variables. t.Setenv restores them.
 	t.Setenv("VERSITYGW_ENDPOINT", g.srv.URL)

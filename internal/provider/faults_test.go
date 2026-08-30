@@ -10,9 +10,10 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
 )
 
-// These run under TF_ACC like the real acceptance tests — they drive the
-// provider through Terraform — but against fakeGateway, because the branches
-// they cover are the ones a healthy gateway never takes.
+// These drive the provider through Terraform like the real acceptance tests,
+// but against fakeGateway, because the branches they cover are the ones a
+// healthy gateway never takes. newFakeGateway sets TF_ACC, so they run in a
+// plain `go test ./...` — they need a terraform binary, not a gateway.
 
 const faultUser = `
 resource "versitygw_user" "test" {
